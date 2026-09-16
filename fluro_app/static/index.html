@@ -251,6 +251,19 @@
             <input id="md-import-file" type="file" accept=".csv,.xlsx,.xls" style="display:none;">
             <span id="md-status" class="status-line" style="margin:0;"></span>
           </div>
+          <div class="form-row">
+            <label><input type="checkbox" id="md-iqr" checked> IQR 剔除离群</label>
+            <label><input type="checkbox" id="md-log"> log 浓度</label>
+            <label><input type="checkbox" id="md-zscore"> Z-score 标准化</label>
+            <label>交叉验证：
+              <select id="md-cv-method">
+                <option value="loo" selected>留一法</option>
+                <option value="kfold">5 折</option>
+                <option value="leave_group">留浓度组</option>
+              </select>
+            </label>
+            <button id="md-cv" class="btn">交叉验证</button>
+          </div>
           <div id="md-import-box" style="display:none;margin-top:10px;padding:12px;background:#f4f7f9;border-radius:8px;">
             <div class="form-row">
               <label>浓度列：<select id="md-imp-conc"></select></label>
@@ -272,6 +285,8 @@
             <div id="md-models"></div>
             <h3 style="margin-top:16px;">已保存模型</h3>
             <div id="md-saved"></div>
+            <h3 style="margin-top:16px;">交叉验证结果（问题2-H）</h3>
+            <div id="md-cv-box" class="hint">点击「交叉验证」查看各模型 R² / RMSE / MAE。</div>
           </div>
           <div class="card" id="md-curve-card" style="grid-column:1 / -1;">
             <h3>标定曲线 <span id="md-curve-title" style="font-size:12px;color:#8a97a3;"></span></h3>

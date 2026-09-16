@@ -129,12 +129,20 @@
     const status = document.getElementById('md-status');
     status.textContent = '拟合中...';
     try {
+      // 问题2-H：先持久化预处理设置，拟合/检测共用同一口径
+      await global.API.post('/api/modeling/preprocess', {
+        iqr: document.getElementById('md-iqr').checked,
+        log_conc: document.getElementById('md-log').checked,
+        zscore: document.getElementById('md-zscore').checked,
+      });
       const res = await global.API.post('/api/calibration/fit', { feature: curFeature });
       curResults = res;
       selectedType = res.best;
       renderModels(res);
       renderCurveFromResults(res);
-      status.textContent = '拟合完成：' + res.n + ' 个数据点，最佳 ' + (res.best || '-');
+      const prepInfo = res.preprocess && res.preprocess.y_std ? '（Z-score 已标准化）' : '';
+      status.textContent = '拟合完成：' + res.n + ' 个数据点，最佳 ' + (res.best || '-')
+        + (res.preprocess && res.preprocess.removed ? '，IQR 剔除 ' + res.preprocess.removed + ' 个' : '') + prepInfo;
     } catch (e) {
       status.textContent = '拟合失败：' + e.message;
       status.className = 'status-line err';
@@ -276,6 +284,7 @@
       feature: curFeature,
       data: curResults.data,
       n: curResults.n,
+      preprocess: curResults.preprocess || {},   // 问题2-H：预处理元数据（检测反解用）
       saved_at: new Date().toISOString(),
     };
     try {
@@ -292,6 +301,49 @@
     }
   }
 
+  async function savePreprocess() {
+    // 问题2-H：拟合前先把预处理设置持久化，拟合/检测共用同一套口径
+    return global.API.post('/api/modeling/preprocess', {
+      iqr: document.getElementById('md-iqr').checked,
+      log_conc: document.getElementById('md-log').checked,
+      zscore: document.getElementById('md-zscore').checked,
+    });
+  }
+
+  async function runCv() {
+    const status = document.getElementById('md-status');
+    const box = document.getElementById('md-cv-box');
+    status.textContent = '交叉验证中...';
+    status.className = 'status-line';
+    try {
+      await savePreprocess();
+      const res = await global.API.post('/api/modeling/cv', {
+        feature: curFeature,
+        method: document.getElementById('md-cv-method').value,
+        k: 5,
+      });
+      let html = '<table class="feat-table"><thead><tr><th>模型</th><th>R²</th><th>RMSE</th><th>MAE</th><th>折数</th></tr></thead><tbody>';
+      const methodNames = { loo: '留一法', kfold: '5 折', leave_group: '留浓度组' };
+      Object.keys(res.results).forEach(function (mt) {
+        const r = res.results[mt];
+        if (r.error) {
+          html += '<tr><td><b>' + mt + '</b></td><td colspan="4">' + esc(r.error) + '</td></tr>';
+          return;
+        }
+        const s = r.summary;
+        html += '<tr><td><b>' + mt + '</b></td><td>' + s.r2 + '</td><td>' + s.rmse + '</td><td>' + s.mae + '</td><td>' + s.n_folds + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      box.innerHTML = html;
+      box.className = '';
+      status.textContent = '交叉验证完成（' + (methodNames[res.method] || res.method) + '，' + res.n + ' 个点）';
+    } catch (e) {
+      status.textContent = '交叉验证失败：' + e.message;
+      status.className = 'status-line err';
+      box.textContent = '';
+    }
+  }
+
   var initialized = false;
 
   function init() {
@@ -299,10 +351,17 @@
     initialized = true;
     document.getElementById('md-fit').addEventListener('click', runFit);
     document.getElementById('md-save').addEventListener('click', saveModel);
+    document.getElementById('md-cv').addEventListener('click', runCv);
     document.getElementById('md-feature').addEventListener('change', function () {
       curFeature = document.getElementById('md-feature').value;
       loadData();
     });
+    // 恢复预处理设置（问题2-H）
+    global.API.get('/api/modeling/preprocess').then(function (p) {
+      document.getElementById('md-iqr').checked = p.iqr !== false;
+      document.getElementById('md-log').checked = !!p.log_conc;
+      document.getElementById('md-zscore').checked = !!p.zscore;
+    }).catch(function () { /* 忽略 */ });
 
     // 问题2-G：CSV/Excel 标定数据导入（预览列 → 选择浓度列/特征列 → 导入）
     const impFile = document.getElementById('md-import-file');

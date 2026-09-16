@@ -65,6 +65,128 @@ def metrics(y_true, y_pred, n_params):
     return {'r2': round(r2, 6), 'rmse': round(rmse, 6), 'resid_sd': round(resid_sd, 6)}
 
 
+# ---------- 问题2-H：数据预处理与交叉验证 ----------
+
+def preprocess_data(x, y, log_conc=False, zscore=False, iqr=True):
+    """标定数据预处理（问题2-H）。
+
+    - iqr：按浓度组（同浓度重复点）用 IQR 剔除离群特征值；
+    - log_conc：浓度 x 变换为 log10(x+1)（兼容 0 浓度）；
+    - zscore：特征 y 标准化（(y-mean)/std）。
+    返回 (x_clean, y_clean, meta)；meta 含 y_mean/y_std（zscore 时）与剔除数。
+    """
+    x = list(x)
+    y = list(y)
+    meta = {'removed': 0}
+    if iqr and len(x) >= 4:
+        keep = []
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for xi, yi in zip(x, y):
+            groups[round(float(xi), 6)].append(yi)
+        for xi, yi in zip(x, y):
+            g = groups[round(float(xi), 6)]
+            if len(g) >= 4:
+                q1, q3 = np.percentile(g, [25, 75])
+                iqr_v = q3 - q1
+                if iqr_v < 1e-12:
+                    # 组内几乎无变异：不做剔除，避免把正常重复点误删
+                    keep.append((xi, yi))
+                    continue
+                lo, hi = q1 - 1.5 * iqr_v, q3 + 1.5 * iqr_v
+                if lo <= yi <= hi:
+                    keep.append((xi, yi))
+                else:
+                    meta['removed'] += 1
+            else:
+                keep.append((xi, yi))
+        if keep:
+            x, y = zip(*keep)
+            x, y = list(x), list(y)
+    if log_conc:
+        x = [np.log10(float(v) + 1.0) for v in x]
+    if zscore and len(y) >= 2:
+        y_arr = np.asarray(y, dtype=float)
+        ym, ys_ = float(y_arr.mean()), float(y_arr.std(ddof=0))
+        if ys_ > 1e-12:
+            y = [float((v - ym) / ys_) for v in y_arr]
+            meta['y_mean'] = ym
+            meta['y_std'] = ys_
+        else:
+            meta['y_std'] = 0.0
+    return x, y, meta
+
+
+def cross_validate(x, y, model_type='linear', method='loo', k=5):
+    """交叉验证（问题2-H）。
+
+    method: 'loo' 留一 | 'kfold' K 折（按浓度分层）| 'leave_group' 留一个浓度组。
+    返回 {fold_metrics: [...], summary: {r2, rmse, mae, n_folds}}。
+    每折用对应模型拟合训练折、预测验证折。
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    n = len(x)
+    if n < 3 or len(set(x)) < 2:
+        raise ValueError('交叉验证至少需要 3 个点、2 个不同浓度')
+
+    if method == 'loo':
+        folds = [[i] for i in range(n)]
+    elif method == 'leave_group':
+        groups = {}
+        for i, xi in enumerate(x):
+            groups.setdefault(round(float(xi), 6), []).append(i)
+        if len(groups) < 2:
+            raise ValueError('留浓度组验证至少需要 2 个不同浓度')
+        folds = list(groups.values())
+    else:  # kfold 分层：按浓度组打散成 k 折
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for i, xi in enumerate(x):
+            groups[round(float(xi), 6)].append(i)
+        keys = sorted(groups.keys())
+        k = max(2, min(int(k), n))
+        folds = [[] for _ in range(k)]
+        for j, key in enumerate(keys):
+            folds[j % k].extend(groups[key])
+
+    fold_metrics = []
+    all_true, all_pred = [], []
+    idx_all = np.arange(n)
+    for test_idx in folds:
+        if len(test_idx) < 1:
+            continue
+        train_idx = np.setdiff1d(idx_all, test_idx)
+        if len(train_idx) < 2 or len(set(x[train_idx])) < 2:
+            continue
+        try:
+            fitted = fit_model(list(x[train_idx]), list(y[train_idx]), model_type)
+        except ValueError:
+            continue
+        params = fitted['params']
+        y_pred = FUNCS[model_type](list(x[test_idx]), **params)
+        y_true = list(y[test_idx])
+        n_params = PARAM_COUNTS[model_type]
+        m = metrics(y_true, y_pred, n_params)
+        m['n'] = len(y_true)
+        fold_metrics.append(m)
+        all_true.extend(y_true)
+        all_pred.extend(list(y_pred))
+
+    if not fold_metrics:
+        raise ValueError('交叉验证没有可用的折，请检查数据')
+    all_true = np.asarray(all_true, dtype=float)
+    all_pred = np.asarray(all_pred, dtype=float)
+    summary = {
+        'r2': round(float(1.0 - np.sum((all_true - all_pred) ** 2) / max(np.sum((all_true - all_true.mean()) ** 2), 1e-12)), 4),
+        'rmse': round(float(np.sqrt(np.mean((all_true - all_pred) ** 2))), 4),
+        'mae': round(float(np.mean(np.abs(all_true - all_pred))), 4),
+        'n_folds': len(fold_metrics),
+        'method': method,
+    }
+    return {'fold_metrics': fold_metrics, 'summary': summary}
+
+
 def _low_conc_sigma(x, y):
     """LOD 用 σ：最低浓度组若 ≥2 个重复点，用其样本标准差；否则用全局残差估算占位 None。"""
     xs = np.asarray(x, dtype=float)

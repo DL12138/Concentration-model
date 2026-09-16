@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import pytest  # noqa: E402
+import json  # noqa: E402
 import numpy as np  # noqa: E402
 
 from app import create_app  # noqa: E402
@@ -500,3 +501,87 @@ def test_p2g_import_xlsx(client):
     r = client.post('/api/modeling/import', data=data, content_type='multipart/form-data')
     assert r.status_code == 200
     assert r.get_json()['imported'] == 4
+
+
+# ============ 问题 2-H：数据预处理（IQR/log/Z-score）+ 交叉验证 ============
+
+def test_p2h_preprocess_data_unit():
+    from app.modeling import preprocess_data
+    # IQR：同浓度重复组含离群点 → 剔除
+    x = [1, 1, 1, 1, 1, 2, 2, 2, 2, 2]
+    y = [5.0, 5.1, 4.9, 5.0, 9.0, 4.0, 4.1, 3.9, 4.0, 4.0]
+    xc, yc, meta = preprocess_data(x, y, iqr=True)
+    assert meta['removed'] == 1
+    # log 浓度
+    xl, _, _ = preprocess_data([0, 1, 9, 99], [1, 1, 1, 1], log_conc=True)
+    assert abs(xl[0] - 0.0) < 1e-9 and abs(xl[2] - 1.0) < 1e-6
+    # Z-score：标准化后均值为 0
+    _, yz, mz = preprocess_data([1, 2, 3, 4, 5], [2, 4, 6, 8, 10], zscore=True)
+    assert abs(sum(yz)) < 1e-9
+    assert mz['y_std'] > 0
+
+
+def test_p2h_preprocess_settings_persist(client):
+    r = client.post('/api/modeling/preprocess', json={'log_conc': True, 'zscore': True, 'iqr': False})
+    assert r.status_code == 200
+    got = client.get('/api/modeling/preprocess').get_json()
+    assert got['log_conc'] is True and got['zscore'] is True and got['iqr'] is False
+
+
+def test_p2h_cv_loo_and_leave_group(client):
+    """交叉验证：留一法与留浓度组，输出 R²/RMSE/MAE。"""
+    rows = [(0, 1.0), (1, 0.91), (2, 0.82), (5, 0.55), (10, 0.1)]
+    data = {'file': (_make_calib_csv(rows), 'cal.csv'),
+            'conc_col': 'concentration', 'feature_col': 'T_R_over_Bg_R'}
+    client.post('/api/modeling/import', data=data, content_type='multipart/form-data')
+    r = client.post('/api/modeling/cv', json={'feature': 'T_R_over_Bg_R', 'method': 'loo'})
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d['results']['linear']['summary']['r2'] > 0.8
+    assert d['results']['linear']['summary']['n_folds'] >= 3
+    r2 = client.post('/api/modeling/cv', json={'feature': 'T_R_over_Bg_R', 'method': 'leave_group'})
+    assert r2.status_code == 200
+    assert r2.get_json()['method'] == 'leave_group'
+
+
+def test_p2h_fit_with_log_conc_and_detect_inverse(client):
+    """log 浓度拟合 + 检测反解：保存模型带预处理元数据，检测反解回原浓度域。"""
+    # 导入对数线性数据：log10(c+1) 与特征严格线性
+    rows = []
+    for c, feat in [(0, 0.0), (1, 0.301), (2, 0.477), (5, 0.778), (9, 1.0)]:
+        rows.append((c, feat))
+    data = {'file': (_make_calib_csv(rows), 'cal.csv'),
+            'conc_col': 'concentration', 'feature_col': 'T_R_over_Bg_R'}
+    client.post('/api/modeling/import', data=data, content_type='multipart/form-data')
+    client.post('/api/modeling/preprocess', json={'log_conc': True, 'zscore': False, 'iqr': False})
+    fit = client.post('/api/calibration/fit', json={'feature': 'T_R_over_Bg_R'}).get_json()
+    linear = fit['results']['linear']
+    assert linear['r2'] > 0.95
+    # 保存为生效模型
+    mid = client.post('/api/models', json={
+        'name': 'log模型', 'type': 'linear', 'params': linear['params'],
+        'metrics': {'r2': linear['r2'], 'rmse': linear['rmse'], 'lod': linear.get('lod')},
+        'source_snapshot': {'feature': 'T_R_over_Bg_R', 'data': fit['data'], 'n': fit['n'],
+                            'preprocess': fit['preprocess']},
+    }).get_json()['id']
+    client.post(f'/api/models/{mid}/activate')
+    # 检测图：特征值 0.3 → log10(c+1)=0.3 → c ≈ 10^0.3 - 1 ≈ 0.995
+    iid = _upload_img(client)
+    client.post(f'/api/images/{iid}/rois', json={'rois': ROIS_T_BG})
+    client.post(f'/api/images/{iid}/features', json={})
+    from app import database as _db
+    dbp = Path(client.application.config['DATA_DIR']) / 'fluro.db'
+    # 手工写入检测图特征：T.mean_r=30 / Bg.mean_r=100 → T_R_over_Bg_R=0.3
+    _db.execute(dbp, 'UPDATE roi_features SET features_json=? WHERE image_id=? AND roi_name=?',
+                (json.dumps({'mean_r': 30, 'mean_g': 60, 'mean_b': 100,
+                             'median_r': 30, 'median_g': 60, 'median_b': 100,
+                             'std_r': 1, 'std_g': 1, 'std_b': 1, 'hue': 90, 'saturation': 0,
+                             'value': 100, 'lab_l': 50, 'lab_a': 0, 'lab_b': 0, 'gray': 100,
+                             'od_r': 0.9, 'od_g': 0.6, 'od_b': 0.4,
+                             'ratio_gr': 2.0, 'ratio_gb': 0.6, 'ratio_rb': 0.3,
+                             'intensity': 100}), iid, 'T'))
+    _db.execute(dbp, 'UPDATE roi_features SET features_json=? WHERE image_id=? AND roi_name=?',
+                (json.dumps({'mean_r': 100, 'mean_g': 100, 'mean_b': 100}), iid, 'Bg'))
+    det = client.post(f'/api/detect/{iid}', json={}).get_json()
+    assert det['ok'] is True
+    assert abs(det['detection']['conc'] - (10 ** 0.3 - 1)) < 0.2

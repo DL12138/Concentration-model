@@ -314,7 +314,10 @@ def toggle_point(pid):
 
 @bp.route('/calibration/fit', methods=['POST'])
 def fit_calibration():
-    """用当前 included 数据点拟合 4 类模型。body: {feature: 'hue'}"""
+    """用当前 included 数据点拟合 4 类模型。body: {feature: 'hue'}
+
+    数据先应用建模预处理（问题2-H：IQR 剔除 / log 浓度 / Z-score 标准化）。
+    """
     body = request.get_json(silent=True) or {}
     feature = body.get('feature', 'hue')
     if feature not in modeling.FEATURES:
@@ -327,6 +330,13 @@ def fit_calibration():
     xs, ys, groups = _collect_calibration_data(feature)
     if len(xs) < 3 or len(set(xs)) < 3:
         return jsonify({'error': '有效标定点不足（至少 3 个不同浓度、每浓度有特征数据）'}), 400
+    prep = _preprocess_settings()
+    xs, ys, prep_meta = modeling.preprocess_data(xs, ys, log_conc=prep['log_conc'],
+                                                 zscore=prep['zscore'], iqr=prep['iqr'])
+    prep_meta['log_conc'] = bool(prep['log_conc'])
+    prep_meta['zscore'] = bool(prep['zscore'])
+    if len(xs) < 3 or len(set(xs)) < 3:
+        return jsonify({'error': '预处理后有效标定点不足（至少 3 个不同浓度），请调整预处理或补充数据'}), 400
     results = modeling.fit_all_models(xs, ys)
     best = modeling.best_model(results)
     xmin, xmax = min(xs), max(xs)
@@ -340,7 +350,69 @@ def fit_calibration():
         'results': results,
         'best': best[0] if best else None,
         'data': [[round(x, 4), round(y, 4)] for x, y in zip(xs, ys)],
+        'preprocess': prep_meta,
     })
+
+
+# ---- 问题2-H：数据预处理设置与交叉验证 ----
+
+def _preprocess_settings():
+    raw = db.get_setting(_db_path(), 'modeling_preprocess') or '{}'
+    try:
+        d = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        d = {}
+    return {'log_conc': bool(d.get('log_conc')), 'zscore': bool(d.get('zscore')),
+            'iqr': bool(d.get('iqr', True))}
+
+
+@bp.route('/modeling/preprocess', methods=['GET', 'POST'])
+def modeling_preprocess():
+    """查看/设置建模预处理参数（log 浓度、Z-score 标准化、IQR 剔除）。"""
+    if request.method == 'GET':
+        return jsonify(_preprocess_settings())
+    body = request.get_json(silent=True) or {}
+    d = {'log_conc': bool(body.get('log_conc')),
+         'zscore': bool(body.get('zscore')),
+         'iqr': bool(body.get('iqr', True))}
+    db.set_setting(_db_path(), 'modeling_preprocess', json.dumps(d, ensure_ascii=False))
+    return jsonify({'ok': True, **d})
+
+
+@bp.route('/modeling/cv', methods=['POST'])
+def modeling_cv():
+    """交叉验证（问题2-H）：loo / kfold / leave_group，对全部模型输出 R²/RMSE/MAE。"""
+    body = request.get_json(silent=True) or {}
+    feature = body.get('feature', 'hue')
+    if feature not in modeling.FEATURES:
+        imported = db.query_one(_db_path(),
+                                "SELECT 1 FROM calibration_points WHERE source='import' AND feature_name=? LIMIT 1",
+                                (feature,))
+        if not imported:
+            return jsonify({'error': f'不支持的特征：{feature}'}), 400
+    method = body.get('method', 'loo')
+    if method not in ('loo', 'kfold', 'leave_group'):
+        return jsonify({'error': 'method 仅支持 loo / kfold / leave_group'}), 400
+    try:
+        k = max(2, int(body.get('k', 5)))
+    except (TypeError, ValueError):
+        k = 5
+    xs, ys, _ = _collect_calibration_data(feature)
+    if len(xs) < 3 or len(set(xs)) < 3:
+        return jsonify({'error': '有效标定点不足（至少 3 个不同浓度）'}), 400
+    prep = _preprocess_settings()
+    xs, ys, prep_meta = modeling.preprocess_data(xs, ys, log_conc=prep['log_conc'],
+                                                 zscore=prep['zscore'], iqr=prep['iqr'])
+    prep_meta['log_conc'] = bool(prep['log_conc'])
+    prep_meta['zscore'] = bool(prep['zscore'])
+    out = {}
+    for mt in modeling.MODEL_TYPES:
+        try:
+            out[mt] = modeling.cross_validate(xs, ys, mt, method, k)
+        except ValueError as e:
+            out[mt] = {'error': str(e)}
+    return jsonify({'ok': True, 'results': out, 'preprocess': prep_meta,
+                    'n': len(xs), 'method': method, 'k': k})
 
 
 @bp.route('/models', methods=['GET'])
@@ -437,7 +509,24 @@ def run_detection(image_id):
     metrics = json.loads(model['metrics_json'] or '{}')
     snap = json.loads(model['source_snapshot_json'] or '{}')
     feature = snap.get('feature', 'hue')
-    fval = feat.get(feature)
+    fval = feat.get(feature) if feat else None
+    if fval is None:
+        # 问题2-G/H：组合/自定义特征（如 T_R_over_Bg_R、deltaE_T_vs_Bg）从 roi_features 派生
+        try:
+            from ..image_processing import derive_combined_features
+            rf_rows = db.query(_db_path(), 'SELECT * FROM roi_features WHERE image_id=?', (image_id,))
+            feats_map = {}
+            for r in rf_rows:
+                try:
+                    feats_map[r['roi_name']] = json.loads(r['features_json'])
+                except Exception:  # noqa: BLE001
+                    continue
+            comb = derive_combined_features(feats_map)
+            fval = comb.get(feature)
+            if fval is None and feature in feats_map.get('T', {}):
+                fval = feats_map['T'].get(feature)
+        except Exception:  # noqa: BLE001
+            fval = None
     if fval is None:
         raise ValueError(f'该图缺少特征“{feature}”，无法检测')
     data = snap.get('data') or []
@@ -446,7 +535,16 @@ def run_detection(image_id):
     xs = [float(d[0]) for d in data]
     ys = [float(d[1]) for d in data]
 
-    res = modeling.predict_with_u(model['type'], params, fval, xs, ys)
+    # 问题2-H：应用保存模型时的预处理（Z-score 特征 → 预测后反标准化；log 浓度 → 反解）
+    prep = snap.get('preprocess') or {}
+    fval_d = float(fval)
+    if prep.get('y_std'):
+        fval_d = (fval_d - prep['y_mean']) / prep['y_std']
+    res = modeling.predict_with_u(model['type'], params, fval_d, xs, ys)
+    if prep.get('log_conc'):
+        import math
+        res['conc'] = max(10.0 ** res['conc'] - 1.0, 0.0)
+        res['u'] = res['u'] * math.log(10.0) * (res['conc'] + 1.0)
     lower = _num_setting('limit_lower')
     upper = _num_setting('limit_upper')
     status = _judge(res['conc'], res['u'], lower, upper)
