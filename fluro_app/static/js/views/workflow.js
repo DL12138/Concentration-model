@@ -51,7 +51,11 @@
       stTag.textContent = STATUS_LABEL[im.status] || im.status || '待处理';
       meta.appendChild(stTag);
       const info = document.createElement('div');
-      info.textContent = im.known_conc != null ? ('浓度 ' + im.known_conc) : (im.batch ? ('批次 ' + im.batch) : '');
+      const nameParts = [];
+      if (im.filename) nameParts.push(im.filename);
+      if (im.known_conc != null) nameParts.push('浓度 ' + im.known_conc);
+      else if (im.batch) nameParts.push('批次 ' + im.batch);
+      info.textContent = nameParts.join(' · ');
       meta.appendChild(info);
       div.appendChild(del);
       div.appendChild(img);
@@ -637,8 +641,8 @@
       }
     });
 
-    btn.addEventListener('click', async function () {
-      const files = filesInput.files;
+    async function uploadFiles(fileList) {
+      const files = fileList;
       if (!files || files.length === 0) {
         status.textContent = '请先选择图片文件';
         status.className = 'status-line err';
@@ -652,7 +656,7 @@
         fd.append('known_conc', document.getElementById('up-conc').value || '');
       }
       btn.disabled = true;
-      status.textContent = '上传中...';
+      status.textContent = '上传中（' + files.length + ' 个文件）...';
       status.className = 'status-line';
       try {
         const res = await global.API.postForm('/api/images/upload', fd);
@@ -660,6 +664,8 @@
         status.className = res.errors && res.errors.length ? 'status-line err' : 'status-line';
         renderGallery(res.images);
         filesInput.value = '';
+        const dirInput = document.getElementById('up-dir');
+        if (dirInput) dirInput.value = '';
         if (res.images.length) runPipeline(res.images.map(function (im) { return im.id; }));
         if (global.FluroApp) global.FluroApp.refreshTopbar();
       } catch (e) {
@@ -668,6 +674,25 @@
       } finally {
         btn.disabled = false;
       }
+    }
+
+    btn.addEventListener('click', function () { uploadFiles(filesInput.files); });
+
+    const dirInput = document.getElementById('up-dir');
+    const dirBtn = document.getElementById('up-dir-btn');
+    if (dirBtn) dirBtn.addEventListener('click', function () { dirInput.click(); });
+    if (dirInput) dirInput.addEventListener('change', function () {
+      // 只取目录中受支持的图片文件，避免把隐藏文件/临时文件传上去
+      const IMG_EXT = /\.(jpe?g|png|bmp|tiff?|webp)$/i;
+      const files = Array.prototype.filter.call(dirInput.files, function (f) {
+        return IMG_EXT.test(f.name) && f.size > 0;
+      });
+      if (!files.length) {
+        status.textContent = '所选文件夹中没有可导入的图片（jpg/jpeg/png/bmp/tif/tiff/webp）';
+        status.className = 'status-line err';
+        return;
+      }
+      uploadFiles(files);
     });
 
     document.getElementById('pp-run').addEventListener('click', function () { runPreprocess(false); });

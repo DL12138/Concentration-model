@@ -308,3 +308,38 @@ def _decode_resp(resp):
     import numpy as _np
     arr = _np.frombuffer(resp.data, dtype=_np.uint8)
     return _cv2.imdecode(arr, _cv2.IMREAD_COLOR)[:, :, ::-1]
+
+
+# ============ 问题 2-D：图片导入增强（文件夹/格式/文件信息） ============
+
+def test_p2d_upload_keeps_filename(client):
+    """上传时保留原始文件名，缩略图列表可读（问题2 界面1 的文件信息要求）。"""
+    import io
+    import cv2 as _cv2
+    from tools import make_test_images as _mti
+    img = _mti.make_test_image(20)
+    ok, buf = _cv2.imencode('.png', img[:, :, ::-1])
+    data = {'files': [(io.BytesIO(buf.tobytes()), 'sample_T1_20ng.png')], 'kind': 'detection',
+            'batch': 'B-2D'}
+    res = client.post('/api/images/upload', data=data, content_type='multipart/form-data').get_json()
+    assert res['images'][0]['filename'] == 'sample_T1_20ng.png'
+    listing = client.get('/api/images').get_json()['images']
+    assert any(im['filename'] == 'sample_T1_20ng.png' for im in listing)
+
+
+def test_p2d_supported_formats(client):
+    """jpg/jpeg/png/bmp/tif/tiff/webp 均可导入；非图片文件被拒且不影响其余文件。"""
+    import io
+    import cv2 as _cv2
+    from tools import make_test_images as _mti
+    img = _mti.make_test_image(10)
+    files = []
+    for ext in ('.jpg', '.png', '.bmp', '.tif', '.webp'):
+        ok, buf = _cv2.imencode(ext, img[:, :, ::-1])
+        assert ok, f'{ext} 编码失败'
+        files.append((io.BytesIO(buf.tobytes()), 'img' + ext))
+    files.append((io.BytesIO(b'not an image'), 'bad.txt'))
+    res = client.post('/api/images/upload', data={'files': files, 'kind': 'detection'},
+                      content_type='multipart/form-data').get_json()
+    assert len(res['images']) == 5
+    assert res['errors'] and 'bad.txt' in res['errors'][0]

@@ -58,8 +58,9 @@ def _upsert_step(image_id, step, params_json, status, error=None):
 
 
 def _save_uploaded(file_storage):
-    """保存上传文件：原图 + 缩略图，返回 (abs_path, thumb_path)。"""
-    ext = Path(file_storage.filename).suffix.lower() or '.png'
+    """保存上传文件：原图 + 缩略图，返回 (abs_path, thumb_path, filename)。"""
+    filename = Path(file_storage.filename).name or f'图片_{uuid.uuid4().hex[:8]}.png'
+    ext = Path(filename).suffix.lower() or '.png'
     if ext not in ('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp'):
         ext = '.png'
     date_dir = datetime.now().strftime('%Y%m%d')
@@ -74,13 +75,13 @@ def _save_uploaded(file_storage):
     img = read_image(raw_path)
     if img is None:
         raw_path.unlink(missing_ok=True)
-        raise ValueError(f'无法解码图片：{file_storage.filename}')
+        raise ValueError(f'无法解码图片：{filename}')
     thumb = make_thumbnail(img)
     thumb_path = tdir / f'{uid}.jpg'
     cv2_thumb = thumb[:, :, ::-1]  # RGB -> BGR 供 cv2 保存
     import cv2
     cv2.imwrite(str(thumb_path), cv2_thumb)
-    return str(raw_path), str(thumb_path)
+    return str(raw_path), str(thumb_path), filename
 
 
 @bp.route('/images/upload', methods=['POST'])
@@ -109,20 +110,21 @@ def upload_images():
     errors = []
     for f in files:
         try:
-            raw_path, thumb_path = _save_uploaded(f)
+            raw_path, thumb_path, filename = _save_uploaded(f)
         except ValueError as e:
             errors.append(str(e))
             continue
         img_id = db.execute(
             _db_path(),
-            'INSERT INTO images (file_path, thumb_path, kind, batch, known_conc) VALUES (?,?,?,?,?)',
-            (raw_path, thumb_path, kind, batch, known_conc),
+            'INSERT INTO images (file_path, thumb_path, kind, batch, known_conc, filename) VALUES (?,?,?,?,?,?)',
+            (raw_path, thumb_path, kind, batch, known_conc, filename),
         )
         results.append({
             'id': img_id,
             'kind': kind,
             'batch': batch,
             'known_conc': known_conc,
+            'filename': filename,
             'thumb_url': f'/api/images/{img_id}/thumb',
         })
     return jsonify({'ok': True, 'images': results, 'errors': errors})

@@ -126,6 +126,10 @@ MIGRATIONS = [
             UNIQUE(image_id, roi_name)
         )""",
     ]),
+    (6, [
+        # 显示/导出用：保留上传时的原始文件名（问题2-D）
+        """ALTER TABLE images ADD COLUMN filename TEXT""",
+    ]),
 ]
 
 
