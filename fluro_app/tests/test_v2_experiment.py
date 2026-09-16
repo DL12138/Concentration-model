@@ -430,3 +430,73 @@ def test_p2f_roi_rgb_bar_data(client):
     # T（红）与 Bg（蓝背景）RGB 存在可辨差异（红色通道最突出）
     assert abs(t['mean_r'] - bg['mean_r']) > 10
     assert t['mean_r'] > bg['mean_r']
+
+
+# ============ 问题 2-G：界面2 数据导入（CSV/Excel）与列选择 ============
+
+def _make_calib_csv(rows):
+    import io as _io
+    buf = _io.StringIO()
+    buf.write('concentration,T_R_over_Bg_R\n')
+    for c, f in rows:
+        buf.write(f'{c},{f}\n')
+    return _io.BytesIO(buf.getvalue().encode('utf-8'))
+
+
+def test_p2g_import_preview_columns(client):
+    data = {'file': (_make_calib_csv([(1, 0.5)]), 'cal.csv')}
+    r = client.post('/api/modeling/import_preview', data=data, content_type='multipart/form-data')
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d['columns'] == ['concentration', 'T_R_over_Bg_R']
+    assert d['total_rows'] == 1
+
+
+def test_p2g_import_groups_and_fit(client):
+    """导入 CSV → 按浓度分组 → 用导入数据拟合模型成功。"""
+    rows = [(0, 1.0), (1, 0.91), (2, 0.82), (5, 0.55), (10, 0.1)]  # 严格线性 y=1-0.09x
+    data = {'file': (_make_calib_csv(rows), 'cal.csv'),
+            'conc_col': 'concentration', 'feature_col': 'T_R_over_Bg_R'}
+    r = client.post('/api/modeling/import', data=data, content_type='multipart/form-data')
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d['imported'] == 5 and d['groups'] == 5
+
+    got = client.get('/api/calibration/data').get_json()
+    assert len(got['groups']) == 5
+    # 拟合导入数据（自定义特征列）
+    fit = client.post('/api/calibration/fit', json={'feature': 'T_R_over_Bg_R'}).get_json()
+    assert fit['ok'] is True
+    linear = fit['results']['linear']
+    assert linear['r2'] > 0.9
+    # 导入点带特征值，app 点不依赖真实图
+    points = [p for g in got['groups'] for p in g['points']]
+    assert all(p['source'] == 'import' for p in points)
+
+
+def test_p2g_import_requires_columns(client):
+    data = {'file': (_make_calib_csv([(1, 0.5)]), 'cal.csv')}
+    r = client.post('/api/modeling/import', data=data, content_type='multipart/form-data')
+    assert r.status_code == 400
+    data2 = {'file': (_make_calib_csv([(1, 0.5)]), 'cal.csv'),
+             'conc_col': 'concentration', 'feature_col': 'not_exist'}
+    r = client.post('/api/modeling/import', data=data2, content_type='multipart/form-data')
+    assert r.status_code == 400
+
+
+def test_p2g_import_xlsx(client):
+    """Excel 标定数据导入（openpyxl 生成 → 解析 → 分组）。"""
+    import io as _io
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(['conc', 'T_R'])
+    for c, f in [(0, 200), (1, 180), (2, 160), (5, 120)]:
+        ws.append([c, f])
+    buf = _io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    data = {'file': (buf, 'cal.xlsx'), 'conc_col': 'conc', 'feature_col': 'T_R'}
+    r = client.post('/api/modeling/import', data=data, content_type='multipart/form-data')
+    assert r.status_code == 200
+    assert r.get_json()['imported'] == 4

@@ -31,13 +31,19 @@ def recompute_downstream(image_id):
 
 
 def _collect_calibration_data(feature=None):
-    """收集全部标定数据点：返回 (xs, ys, points)，points 含各分组信息。"""
+    """收集全部标定数据点：返回 (xs, ys, points)，points 含各分组信息。
+
+    支持两类数据点：
+    - 应用内（source='app'）：image_id 指向真实图，特征取自 features 表；
+    - 导入（source='import'）：image_id=0，特征取自 feature_value（问题2-G CSV/Excel 导入）。
+    """
     rows = db.query(_db_path(),
                     'SELECT cp.id AS point_id, cp.group_id, cp.included, cp.image_id, '
+                    'cp.feature_value, cp.feature_name, cp.source, '
                     'cg.conc, cg.name AS group_name, f.* '
                     'FROM calibration_points cp '
                     'JOIN calibration_groups cg ON cg.id = cp.group_id '
-                    'JOIN features f ON f.image_id = cp.image_id '
+                    'LEFT JOIN features f ON f.image_id = cp.image_id '
                     'ORDER BY cg.conc, cp.id')
     groups_map = {}
     xs, ys, points = [], [], []
@@ -45,10 +51,14 @@ def _collect_calibration_data(feature=None):
         groups_map.setdefault(r['group_id'], {
             'id': r['group_id'], 'name': r['group_name'], 'conc': r['conc'], 'points': [],
         })
-        feat = r.get(feature) if feature else r.get('hue')
+        feat = r.get('feature_value')
+        if feat is None:
+            feat = r.get(feature) if feature else r.get('hue')
         groups_map[r['group_id']]['points'].append({
             'point_id': r['point_id'], 'image_id': r['image_id'], 'included': r['included'],
+            'source': r.get('source') or 'app',
             'features': {k: r[k] for k in modeling.FEATURES if k in r},
+            'feature_value': r.get('feature_value'),
         })
         if feature:
             points.append(r)
@@ -57,6 +67,110 @@ def _collect_calibration_data(feature=None):
                 ys.append(feat)
     groups = list(groups_map.values())
     return xs, ys, groups
+
+
+# ---- 问题2-G：CSV/Excel 标定数据导入 ----
+
+def _parse_table_file(file_storage):
+    """解析 CSV / Excel（.csv/.xlsx/.xls），返回 (columns, rows)。"""
+    filename = file_storage.filename or ''
+    suffix = Path(filename).suffix.lower()
+    if suffix == '.csv':
+        import csv as _csv
+        import io as _io
+        raw = file_storage.read().decode('utf-8-sig', errors='replace')
+        reader = _csv.DictReader(_io.StringIO(raw))
+        columns = reader.fieldnames or []
+        rows = [dict(row) for row in reader]
+    elif suffix in ('.xlsx', '.xls'):
+        try:
+            import openpyxl
+        except ImportError:
+            raise ValueError('未安装 openpyxl，请运行 pip install openpyxl')
+        wb = openpyxl.load_workbook(_io_bytes(file_storage), data_only=True)
+        ws = wb.active
+        all_rows = list(ws.iter_rows(values_only=True))
+        if not all_rows:
+            return [], []
+        header = [str(c).strip() if c is not None else '' for c in all_rows[0]]
+        columns = header
+        rows = []
+        for line in all_rows[1:]:
+            row = {}
+            for i, col in enumerate(header):
+                if col:
+                    row[col] = line[i] if i < len(line) else None
+            rows.append(row)
+    else:
+        raise ValueError('仅支持 .csv / .xlsx / .xls 文件')
+    return columns, rows
+
+
+def _io_bytes(file_storage):
+    import io as _io
+    return _io.BytesIO(file_storage.read())
+
+
+@bp.route('/modeling/import_preview', methods=['POST'])
+def modeling_import_preview():
+    """解析上传的 CSV/Excel，返回列名与前几行供选择浓度列/特征列。"""
+    f = request.files.get('file')
+    if not f:
+        return jsonify({'error': '未收到文件'}), 400
+    try:
+        columns, rows = _parse_table_file(f)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    if not columns:
+        return jsonify({'error': '文件为空或缺少表头'}), 400
+    return jsonify({'ok': True, 'columns': columns, 'preview': rows[:5], 'total_rows': len(rows)})
+
+
+@bp.route('/modeling/import', methods=['POST'])
+def modeling_import():
+    """导入 CSV/Excel 标定数据：按浓度分组建立标定组（重复行=同浓度重复点）。"""
+    f = request.files.get('file')
+    conc_col = (request.form.get('conc_col') or '').strip()
+    feat_col = (request.form.get('feature_col') or '').strip()
+    if not f:
+        return jsonify({'error': '未收到文件'}), 400
+    if not conc_col or not feat_col:
+        return jsonify({'error': '请选择浓度列与特征列'}), 400
+    try:
+        columns, rows = _parse_table_file(f)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    if conc_col not in columns or feat_col not in columns:
+        return jsonify({'error': f'列不存在：{conc_col} / {feat_col}'}), 400
+
+    groups = {}
+    imported = 0
+    skipped = 0
+    for row in rows:
+        try:
+            conc = float(row.get(conc_col))
+        except (TypeError, ValueError):
+            skipped += 1
+            continue
+        feat_raw = row.get(feat_col)
+        try:
+            feat = float(feat_raw)
+        except (TypeError, ValueError):
+            skipped += 1
+            continue
+        if conc not in groups:
+            gid = db.execute(_db_path(),
+                             'INSERT INTO calibration_groups (name, conc) VALUES (?,?)',
+                             (f'{Path(f.filename).stem} @ {conc}', conc))
+            groups[conc] = gid
+        db.execute(_db_path(),
+                   'INSERT INTO calibration_points (group_id, image_id, included, feature_value, feature_name, source) '
+                   'VALUES (?,?,1,?,?,?)',
+                   (groups[conc], 0, feat, feat_col, 'import'))
+        imported += 1
+    if imported == 0:
+        return jsonify({'error': f'没有可导入的数据行（浓度/特征列 {conc_col}/{feat_col} 无法解析）'}), 400
+    return jsonify({'ok': True, 'imported': imported, 'skipped': skipped, 'groups': len(groups)})
 
 
 @bp.route('/calibration/data', methods=['GET'])
@@ -204,7 +318,12 @@ def fit_calibration():
     body = request.get_json(silent=True) or {}
     feature = body.get('feature', 'hue')
     if feature not in modeling.FEATURES:
-        return jsonify({'error': f'不支持的特征：{feature}（可选：{", ".join(modeling.FEATURES)}）'}), 400
+        # 问题2-G：允许用 CSV/Excel 导入的自定义特征列（如 T_R_over_Bg_R）
+        imported = db.query_one(_db_path(),
+                                "SELECT 1 FROM calibration_points WHERE source='import' AND feature_name=? LIMIT 1",
+                                (feature,))
+        if not imported:
+            return jsonify({'error': f'不支持的特征：{feature}（可选：{", ".join(modeling.FEATURES)}）'}), 400
     xs, ys, groups = _collect_calibration_data(feature)
     if len(xs) < 3 or len(set(xs)) < 3:
         return jsonify({'error': '有效标定点不足（至少 3 个不同浓度、每浓度有特征数据）'}), 400

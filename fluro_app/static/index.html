@@ -247,7 +247,18 @@
             </label>
             <button id="md-fit" class="btn primary">拟合全部模型</button>
             <button id="md-save" class="btn">保存所选为生效模型</button>
+            <button id="md-import" class="btn">导入 CSV/Excel 标定数据</button>
+            <input id="md-import-file" type="file" accept=".csv,.xlsx,.xls" style="display:none;">
             <span id="md-status" class="status-line" style="margin:0;"></span>
+          </div>
+          <div id="md-import-box" style="display:none;margin-top:10px;padding:12px;background:#f4f7f9;border-radius:8px;">
+            <div class="form-row">
+              <label>浓度列：<select id="md-imp-conc"></select></label>
+              <label>特征列：<select id="md-imp-feat"></select></label>
+              <button id="md-import-go" class="btn primary">导入</button>
+              <span id="md-imp-status" class="status-line" style="margin:0;"></span>
+            </div>
+            <div id="md-imp-preview" class="hint"></div>
           </div>
         </div>
         <div class="md-grid">

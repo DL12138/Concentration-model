@@ -303,6 +303,61 @@
       curFeature = document.getElementById('md-feature').value;
       loadData();
     });
+
+    // 问题2-G：CSV/Excel 标定数据导入（预览列 → 选择浓度列/特征列 → 导入）
+    const impFile = document.getElementById('md-import-file');
+    const impBox = document.getElementById('md-import-box');
+    const impStatus = document.getElementById('md-imp-status');
+    document.getElementById('md-import').addEventListener('click', function () { impFile.click(); });
+    impFile.addEventListener('change', async function () {
+      if (!impFile.files.length) return;
+      const fd = new FormData();
+      fd.append('file', impFile.files[0]);
+      impStatus.textContent = '解析文件中...';
+      impStatus.className = 'status-line';
+      try {
+        const res = await global.API.postForm('/api/modeling/import_preview', fd);
+        const concSel = document.getElementById('md-imp-conc');
+        const featSel = document.getElementById('md-imp-feat');
+        concSel.innerHTML = '';
+        featSel.innerHTML = '';
+        res.columns.forEach(function (c) {
+          concSel.appendChild(new Option(c, c));
+          featSel.appendChild(new Option(c, c));
+        });
+        const guess = res.columns.find(function (c) { return /conc|浓度/i.test(c); });
+        const fguess = res.columns.find(function (c) { return /(_R$|_G$|_B$|mean|hue|T_R|Bg|ratio|od_|OD)/i.test(c); });
+        if (guess) concSel.value = guess;
+        if (fguess) featSel.value = fguess;
+        document.getElementById('md-imp-preview').textContent =
+          '列：' + res.columns.join('、') + '　共 ' + res.total_rows + ' 行，预览前 ' + Math.min(5, res.preview.length) + ' 行。';
+        impBox.style.display = 'block';
+        impStatus.textContent = '';
+      } catch (e) {
+        impStatus.textContent = '解析失败：' + e.message;
+        impStatus.className = 'status-line err';
+      }
+    });
+    document.getElementById('md-import-go').addEventListener('click', async function () {
+      if (!impFile.files.length) return;
+      const fd = new FormData();
+      fd.append('file', impFile.files[0]);
+      fd.append('conc_col', document.getElementById('md-imp-conc').value);
+      fd.append('feature_col', document.getElementById('md-imp-feat').value);
+      impStatus.textContent = '导入中...';
+      impStatus.className = 'status-line';
+      try {
+        const res = await global.API.postForm('/api/modeling/import', fd);
+        impStatus.textContent = '导入完成：' + res.imported + ' 个数据点（' + res.groups + ' 个浓度组）'
+          + (res.skipped ? '，跳过 ' + res.skipped + ' 行' : '');
+        impStatus.className = 'status-line';
+        await loadData();
+      } catch (e) {
+        impStatus.textContent = '导入失败：' + e.message;
+        impStatus.className = 'status-line err';
+      }
+    });
+
     loadData();
   }
 

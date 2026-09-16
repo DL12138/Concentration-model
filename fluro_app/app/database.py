@@ -135,6 +135,12 @@ MIGRATIONS = [
         """ALTER TABLE images ADD COLUMN note TEXT""",
         """ALTER TABLE images ADD COLUMN replicate INTEGER NOT NULL DEFAULT 1""",
     ]),
+    (8, [
+        # 问题2-G：界面2 支持 CSV/Excel 导入标定数据（外部数据点）
+        """ALTER TABLE calibration_points ADD COLUMN feature_value REAL""",
+        """ALTER TABLE calibration_points ADD COLUMN feature_name TEXT""",
+        """ALTER TABLE calibration_points ADD COLUMN source TEXT NOT NULL DEFAULT 'app'""",
+    ]),
 ]
 
 
