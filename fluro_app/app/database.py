@@ -130,6 +130,11 @@ MIGRATIONS = [
         # 显示/导出用：保留上传时的原始文件名（问题2-D）
         """ALTER TABLE images ADD COLUMN filename TEXT""",
     ]),
+    (7, [
+        # 问题2-E：结果表可编辑（备注、重复编号）与导出列
+        """ALTER TABLE images ADD COLUMN note TEXT""",
+        """ALTER TABLE images ADD COLUMN replicate INTEGER NOT NULL DEFAULT 1""",
+    ]),
 ]
 
 

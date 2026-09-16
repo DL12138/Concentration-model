@@ -343,3 +343,75 @@ def test_p2d_supported_formats(client):
                       content_type='multipart/form-data').get_json()
     assert len(res['images']) == 5
     assert res['errors'] and 'bad.txt' in res['errors'][0]
+
+
+# ============ 问题 2-E：结果表可编辑 + CSV/Excel 导出 + 界面1→2 数据 ============
+
+def test_p2e_edit_image_meta(client):
+    """结果表可编辑：批次/浓度/重复编号/备注（PATCH 持久化）。"""
+    iid = _upload_img(client, conc=50)
+    r = client.patch(f'/api/images/{iid}',
+                     json={'batch': 'B-2E', 'known_conc': 42.5, 'replicate': 3, 'note': '三次重复'})
+    assert r.status_code == 200
+    row = client.get('/api/images').get_json()['images'][0]
+    assert row['batch'] == 'B-2E'
+    assert abs(row['known_conc'] - 42.5) < 1e-6
+    assert row['replicate'] == 3
+    assert row['note'] == '三次重复'
+    # 校验：非法浓度 / 重复编号
+    assert client.patch(f'/api/images/{iid}', json={'known_conc': 'abc'}).status_code == 400
+    assert client.patch(f'/api/images/{iid}', json={'replicate': 0}).status_code == 400
+
+
+def test_p2e_export_csv_spec_columns(client):
+    """CSV 导出符合单卡片规格列：image_name/concentration/T_*/Bg_*/ΔE/比值/OD。"""
+    import csv as _csv
+    import io as _io
+    iid = _upload_img(client, conc=20, kind='calibration')
+    client.post(f'/api/images/{iid}/rois', json={'rois': ROIS_T_BG})
+    client.post(f'/api/images/{iid}/features', json={})
+    client.patch(f'/api/images/{iid}', json={'batch': 'EXP-1', 'replicate': 2, 'note': 'ok'})
+    r = client.get('/api/export/features.csv')
+    assert r.status_code == 200
+    text = r.data.decode('utf-8-sig')
+    reader = _csv.DictReader(_io.StringIO(text))
+    cols = reader.fieldnames
+    for c in ('image_name', 'image_path', 'batch', 'concentration', 'replicate',
+              'T_R', 'T_G', 'T_B', 'T_H', 'T_S', 'T_V', 'T1_L', 'T1_a', 'T1_b',
+              'Bg_R', 'Bg_G', 'Bg_B', 'deltaE_T_vs_Bg',
+              'T_R_over_Bg_R', 'T_G_over_Bg_G', 'T_B_over_Bg_B',
+              'OD_T_R', 'OD_T_G', 'OD_T_B', 'note'):
+        assert c in cols, f'缺少列 {c}'
+    rows = list(reader)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row['image_name']  # filename 已保留
+    assert row['concentration'] == '20.0' or abs(float(row['concentration']) - 20) < 1e-6
+    assert row['batch'] == 'EXP-1' and row['replicate'] == '2'
+    assert float(row['T_R']) > 0 and float(row['deltaE_T_vs_Bg']) > 0
+    assert float(row['T_R_over_Bg_R']) > 0
+
+
+def test_p2e_export_xlsx(client):
+    """Excel 导出可被 openpyxl 打开且含规格列。"""
+    import openpyxl
+    import io as _io
+    iid = _upload_img(client, conc=10, kind='calibration')
+    client.post(f'/api/images/{iid}/rois', json={'rois': ROIS_T_BG})
+    client.post(f'/api/images/{iid}/features', json={})
+    r = client.get('/api/export/features.xlsx')
+    assert r.status_code == 200
+    wb = openpyxl.load_workbook(_io.BytesIO(r.data))
+    ws = wb.active
+    header = [c.value for c in ws[1]]
+    assert 'T_R' in header and 'deltaE_T_vs_Bg' in header
+    assert ws.max_row == 2  # 表头 + 一行数据
+
+
+def test_p2e_export_empty_table_ok(client):
+    """无特征数据时导出表头完整、零数据行（不报错）。"""
+    r = client.get('/api/export/features.csv')
+    assert r.status_code == 200
+    text = r.data.decode('utf-8-sig')
+    assert 'image_name' in text
+    assert text.count('\n') == 1  # 只有表头

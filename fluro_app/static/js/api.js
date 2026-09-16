@@ -37,6 +37,14 @@
       });
       return handle(resp);
     },
+    async patch(url, data) {
+      const resp = await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data || {}),
+      });
+      return handle(resp);
+    },
     async del(url) {
       const resp = await fetch(url, { method: 'DELETE' });
       return handle(resp);

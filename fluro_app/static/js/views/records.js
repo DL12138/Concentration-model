@@ -47,13 +47,44 @@
         + '<td>[' + lo + ', ' + hi + ']</td>'
         + '<td><span class="gstatus ' + jm[1] + '">' + jm[0] + '</span></td>'
         + '<td>' + esc((r.created_at || '').slice(0, 19)) + '</td>'
-        + '<td><button class="btn small" data-detail="' + r.id + '">详情</button></td></tr>';
+        + '<td><button class="btn small" data-detail="' + r.id + '">详情</button>'
+        + '<button class="btn small" data-edit="' + r.image_id + '">编辑</button></td></tr>';
     });
     html += '</tbody></table>';
     el.innerHTML = html;
     el.querySelectorAll('[data-detail]').forEach(function (b) {
       b.addEventListener('click', function () { showDetail(parseInt(b.dataset.detail, 10)); });
     });
+    el.querySelectorAll('[data-edit]').forEach(function (b) {
+      b.addEventListener('click', function () { editImageMeta(parseInt(b.dataset.edit, 10)); });
+    });
+  }
+
+  async function editImageMeta(imageId) {
+    // 结果表可编辑（问题2-E）：批次/浓度/重复编号/备注
+    const input = prompt(
+      '编辑该图元信息（单卡片检测记录），格式：\n批次号, 已知浓度, 重复编号, 备注\n（留空字段填 - ）',
+      '-, -, 1, -'
+    );
+    if (input == null) return;
+    const parts = input.split(/[,，]/).map(function (s) { return s.trim(); });
+    const body = {};
+    const batch = parts[0] && parts[0] !== '-' ? parts[0] : '';
+    const conc = parts[1] && parts[1] !== '-' ? parseFloat(parts[1]) : '';
+    const rep = parts[2] && parts[2] !== '-' ? parseInt(parts[2], 10) : '';
+    const note = parts[3] && parts[3] !== '-' ? parts[3] : '';
+    if (Number.isNaN(conc) && parts[1] && parts[1] !== '-') { alert('浓度格式错误'); return; }
+    if (Number.isNaN(rep) && parts[2] && parts[2] !== '-') { alert('重复编号格式错误'); return; }
+    body.batch = batch;
+    body.known_conc = conc;
+    body.replicate = rep || 1;
+    body.note = note;
+    try {
+      await global.API.patch('/api/images/' + imageId, body);
+      await load();
+    } catch (e) {
+      alert('保存失败：' + e.message);
+    }
   }
 
   async function showDetail(detId) {

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from flask import Blueprint, current_app, jsonify, request, send_file, abort
+from flask import Blueprint, Response, current_app, jsonify, request, send_file, abort
 
 from .. import database as db
 from ..image_processing import (read_image, make_thumbnail, preprocess,
@@ -136,6 +136,146 @@ def image_thumb(image_id):
     if not row or not row.get('thumb_path'):
         abort(404)
     return send_file(row['thumb_path'], mimetype='image/jpeg')
+
+
+@bp.route('/images/<int:image_id>', methods=['PATCH'])
+def update_image_meta(image_id):
+    """编辑图片元信息（问题2-E）：批次 / 已知浓度 / 重复编号 / 备注。"""
+    row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
+    if not row:
+        abort(404)
+    body = request.get_json(silent=True) or {}
+    sets, args = [], []
+    if 'batch' in body:
+        batch = (body.get('batch') or '').strip() or None
+        sets.append('batch=?')
+        args.append(batch)
+        if batch:
+            db.execute(_db_path(), 'INSERT OR IGNORE INTO batches (name) VALUES (?)', (batch,))
+    if 'known_conc' in body:
+        v = body.get('known_conc')
+        if v in (None, ''):
+            sets.append('known_conc=NULL')
+        else:
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                return jsonify({'error': '已知浓度格式错误'}), 400
+            sets.append('known_conc=?')
+            args.append(v)
+    if 'note' in body:
+        sets.append('note=?')
+        args.append((body.get('note') or '').strip() or None)
+    if 'replicate' in body:
+        rep_raw = body.get('replicate')
+        try:
+            rep = int(rep_raw) if rep_raw not in (None, '') else 1
+        except (TypeError, ValueError):
+            return jsonify({'error': '重复编号必须为整数'}), 400
+        if rep < 1:
+            return jsonify({'error': '重复编号必须 ≥ 1'}), 400
+        sets.append('replicate=?')
+        args.append(rep)
+    if not sets:
+        return jsonify({'ok': True})
+    args.append(image_id)
+    db.execute(_db_path(), f"UPDATE images SET {', '.join(sets)} WHERE id=?", args)
+    return jsonify({'ok': True})
+
+
+# ---- 问题2-E：特征数据导出（CSV / Excel，单卡片规格列） ----
+
+EXPORT_FEATURE_COLUMNS = [
+    'image_name', 'image_path', 'batch', 'concentration', 'replicate',
+    'T_R', 'T_G', 'T_B', 'T_H', 'T_S', 'T_V', 'T1_L', 'T1_a', 'T1_b',
+    'Bg_R', 'Bg_G', 'Bg_B',
+    'deltaE_T_vs_Bg',
+    'T_R_over_Bg_R', 'T_G_over_Bg_G', 'T_B_over_Bg_B',
+    'OD_T_R', 'OD_T_G', 'OD_T_B',
+    'note',
+]
+
+
+def _export_feature_rows():
+    """按单卡片规格组装每图一行（有 ROI 特征的图）。"""
+    imgs = db.query(_db_path(), 'SELECT * FROM images ORDER BY id')
+    rows = []
+    for im in imgs:
+        rf = db.query(_db_path(), 'SELECT * FROM roi_features WHERE image_id=?', (im['id'],))
+        if not rf:
+            continue
+        feats = {}
+        for r in rf:
+            try:
+                feats[r['roi_name']] = json.loads(r['features_json'])
+            except Exception:  # noqa: BLE001
+                continue
+        if not feats:
+            continue
+        t = feats.get('T') or next((v for k, v in feats.items()
+                                    if k not in ('Bg', 'background', 'Blank', 'blank')), None)
+        bg = feats.get('Bg') or feats.get('background') or feats.get('Blank')
+        comb = derive_combined_features(feats)
+        row = {
+            'image_name': im.get('filename') or f"image_{im['id']}",
+            'image_path': im['file_path'],
+            'batch': im.get('batch') or '',
+            'concentration': im.get('known_conc') if im.get('known_conc') is not None else '',
+            'replicate': im.get('replicate') or 1,
+            'T_R': t.get('mean_r') if t else '', 'T_G': t.get('mean_g') if t else '',
+            'T_B': t.get('mean_b') if t else '', 'T_H': t.get('hue') if t else '',
+            'T_S': t.get('saturation') if t else '', 'T_V': t.get('value') if t else '',
+            'T1_L': t.get('lab_l') if t else '', 'T1_a': t.get('lab_a') if t else '',
+            'T1_b': t.get('lab_b') if t else '',
+            'Bg_R': bg.get('mean_r') if bg else '', 'Bg_G': bg.get('mean_g') if bg else '',
+            'Bg_B': bg.get('mean_b') if bg else '',
+            'deltaE_T_vs_Bg': comb.get('deltaE_T_vs_Bg', ''),
+            'T_R_over_Bg_R': comb.get('T_R_over_Bg_R', ''),
+            'T_G_over_Bg_G': comb.get('T_G_over_Bg_G', ''),
+            'T_B_over_Bg_B': comb.get('T_B_over_Bg_B', ''),
+            'OD_T_R': t.get('od_r') if t else '', 'OD_T_G': t.get('od_g') if t else '',
+            'OD_T_B': t.get('od_b') if t else '',
+            'note': im.get('note') or '',
+        }
+        rows.append(row)
+    return rows
+
+
+@bp.route('/export/features.csv')
+def export_features_csv():
+    import csv as _csv
+    import io as _io
+    rows = _export_feature_rows()
+    buf = _io.StringIO()
+    writer = _csv.DictWriter(buf, fieldnames=EXPORT_FEATURE_COLUMNS)
+    writer.writeheader()
+    writer.writerows(rows)
+    resp = Response(buf.getvalue(), mimetype='text/csv; charset=utf-8')
+    resp.headers['Content-Disposition'] = 'attachment; filename=features.csv'
+    return resp
+
+
+@bp.route('/export/features.xlsx')
+def export_features_xlsx():
+    import io as _io
+    try:
+        from openpyxl import Workbook
+    except ImportError:
+        return jsonify({'error': '未安装 openpyxl，请运行 pip install openpyxl'}), 500
+    rows = _export_feature_rows()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'features'
+    ws.append(EXPORT_FEATURE_COLUMNS)
+    for r in rows:
+        ws.append([r.get(c, '') for c in EXPORT_FEATURE_COLUMNS])
+    buf = _io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    resp = Response(buf.getvalue(),
+                    mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp.headers['Content-Disposition'] = 'attachment; filename=features.xlsx'
+    return resp
 
 
 @bp.route('/images/<int:image_id>/original')
