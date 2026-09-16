@@ -177,6 +177,8 @@ def fit_model(x, y, model_type):
         raise ValueError('标定数据点不足（至少需要 3 个浓度点）')
     if len(set(x)) < 3:
         raise ValueError('至少需要 3 个不同浓度')
+    if PARAM_COUNTS[model_type] > len(x):
+        raise ValueError(f'{model_type} 模型需要至少 {PARAM_COUNTS[model_type]} 个数据点（当前 {len(x)} 个）')
     params = FITTERS[model_type](x, y)
     y_pred = FUNCS[model_type](x, **params)
     m = metrics(y, y_pred, PARAM_COUNTS[model_type])

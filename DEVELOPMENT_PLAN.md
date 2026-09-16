@@ -47,7 +47,7 @@
 ### 1.3 项目目录结构
 
 ```
-D:\Doubao_APP\APP\
+荧光浓度建模APP\            # 项目根目录
 ├── PRD.md                        # 需求依据（已有）
 ├── DEVELOPMENT_PLAN.md           # 本文档
 ├── fluro_app\                    # 应用根目录

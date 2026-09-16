@@ -104,6 +104,19 @@ def test_fit_returns_four_models_and_best(client):
     assert j['best'] in ('linear', 'poly2', 'exp', '4pl')
 
 
+def test_fit_three_points_4pl_reports_error_not_crash(client):
+    """只有 3 个浓度点时：4PL（4 参数）应报告数据不足，接口返回 200 而非 500。"""
+    _setup_calibration(client, concs=(0, 50, 100))
+    resp = client.post('/api/calibration/fit', json={'feature': 'ratio_gr'})
+    assert resp.status_code == 200
+    j = resp.get_json()
+    assert '4pl' in j['results'] and 'error' in j['results']['4pl']
+    assert '数据点' in j['results']['4pl']['error']
+    # 其他低参数模型仍正常
+    assert 'error' not in j['results']['linear']
+    assert j['best'] in ('linear', 'poly2', 'exp')
+
+
 def test_toggle_excludes_point(client):
     _setup_calibration(client)
     # 全部纳入时 n=5

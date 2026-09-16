@@ -16,8 +16,13 @@ def test_dependencies_installed():
 def test_start_bat_exists_and_launches_server():
     bat = os.path.join(ROOT, 'start.bat')
     assert os.path.exists(bat), 'start.bat 不存在'
-    with open(bat, encoding='utf-8') as f:
-        content = f.read()
+    with open(bat, 'rb') as f:
+        raw = f.read()
+    # start.bat 为 GBK（ANSI）编码（cmd 默认代码页 936），兼容 UTF-8 尝试
+    try:
+        content = raw.decode('utf-8')
+    except UnicodeDecodeError:
+        content = raw.decode('gbk')
     assert 'server.py' in content, 'start.bat 未引用 server.py'
     assert 'python' in content.lower(), 'start.bat 未调用 python'
 
