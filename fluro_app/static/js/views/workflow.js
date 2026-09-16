@@ -197,6 +197,8 @@
         detInited = true;
         const btn = document.getElementById('det-run');
         if (btn) btn.addEventListener('click', runDetect);
+        const bm = document.getElementById('det-build-model');
+        if (bm) bm.addEventListener('click', buildModelNow);
       }
     } catch (e) { /* 忽略 */ }
   }
@@ -238,6 +240,57 @@
         ? '<div class="hint">该图已加入浓度分组：' + joined.join('、') + '。可在「标定建模」页拟合并保存生效模型。</div>'
         : '<div class="hint">尚未加入分组：填写浓度后点击「加入标定数据集」。</div>';
     } catch (e) { el.innerHTML = ''; }
+  }
+
+  // 问题3：结果页一键生成模型（标定数据 → 拟合 → 保存生效）
+  async function buildModelNow() {
+    const msg = document.getElementById('det-build-msg');
+    if (!msg) return;
+    msg.textContent = '生成模型中...';
+    msg.className = 'status-line';
+    try {
+      const data = await global.API.get('/api/calibration/data');
+      const n = (data.groups || []).reduce(function (s, g) {
+        return s + (g.points || []).length;
+      }, 0);
+      if (!n || n < 3) {
+        msg.textContent = '标定数据不足（至少 3 个不同浓度）。请先在「标定建模」页导入标定数据，或在标定图结果页录入浓度。';
+        msg.className = 'status-line err';
+        return;
+      }
+      // 优先沿用当前生效模型的特征，否则用标准导入特征 T_R_over_Bg_R
+      let feature = 'T_R_over_Bg_R';
+      try {
+        const ms = await global.API.get('/api/models');
+        const act = (ms.models || []).find(function (m) { return m.is_active; });
+        if (act && act.feature) feature = act.feature;
+      } catch (e) { /* 无模型时用默认特征 */ }
+      const fit = await global.API.post('/api/calibration/fit', { feature: feature });
+      if (!fit.ok || !fit.best || !fit.results[fit.best]) {
+        throw new Error(fit.error || '拟合失败');
+      }
+      const best = fit.results[fit.best];
+      const name = '工作流生成 ' + new Date().toLocaleString();
+      const saved = await global.API.post('/api/models', {
+        name: name, type: fit.best, params: best.params,
+        metrics: { r2: best.r2, rmse: best.rmse, lod: best.lod },
+        source_snapshot: { feature: fit.feature, data: fit.data, n: fit.n, preprocess: fit.preprocess },
+      });
+      msg.textContent = '模型已生成并生效：' + name + '（' + fit.best + '，R²=' + Number(best.r2).toFixed(4)
+        + (best.lod == null ? '' : '，LOD=' + Number(best.lod).toFixed(3)) + '）';
+      msg.className = 'status-line';
+      if (global.FluroApp) global.FluroApp.refreshTopbar();
+      // 用新模型重新检测当前图并刷新结果卡
+      if (currentImageId) {
+        try {
+          const res = await global.API.post('/api/detect/' + currentImageId, {});
+          renderDetection(res);
+        } catch (e2) { /* 保留原结果 */ }
+      }
+    } catch (e) {
+      msg.textContent = '生成失败：' + e.message;
+      msg.className = 'status-line err';
+    }
   }
 
   async function runDetect() {
