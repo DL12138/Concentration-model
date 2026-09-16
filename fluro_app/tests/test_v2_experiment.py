@@ -190,3 +190,70 @@ def test_p2a_overlay_all_rois(client):
     client.post(f'/api/images/{iid}/rois', json={'rois': ROIS_T_BG})
     r = client.get(f'/api/images/{iid}/overlay')
     assert r.status_code == 200 and r.headers['Content-Type'].startswith('image/png')
+
+
+# ============ 问题 2-B：扩展特征提取（RGB/SD、Lab、OD、ΔE、比值） ============
+
+def test_p2b_extract_roi_features_full_fields(client):
+    from app.image_processing import extract_roi_features
+    import numpy as _np
+    from tools import make_test_images as _mti
+    img = _mti.make_test_image(50)
+    f = extract_roi_features(img, (0.335, 0.28, 0.33, 0.44))
+    for key in ('mean_r', 'mean_g', 'mean_b', 'median_r', 'median_g', 'median_b',
+                'std_r', 'std_g', 'std_b', 'hue', 'saturation', 'value',
+                'lab_l', 'lab_a', 'lab_b', 'gray', 'od_r', 'od_g', 'od_b',
+                'ratio_gr', 'ratio_gb', 'ratio_rb'):
+        assert f[key] is not None, f'{key} 缺失'
+    # OD 单调性：亮像素 OD 小，暗像素 OD 大
+    bright = _np.full((20, 20, 3), 240, dtype=_np.uint8)
+    dark = _np.full((20, 20, 3), 30, dtype=_np.uint8)
+    assert extract_roi_features(bright, (0, 0, 1, 1))['od_r'] < extract_roi_features(dark, (0, 0, 1, 1))['od_r']
+
+
+def test_p2b_compute_multi_roi_features(client):
+    iid = _upload_img(client, conc=100)  # T 区红色、Bg 区取背景附近
+    client.post(f'/api/images/{iid}/rois', json={'rois': ROIS_T_BG})
+    r = client.post(f'/api/images/{iid}/features', json={})
+    assert r.status_code == 200
+    d = r.get_json()
+    assert 'T' in d['rois'] and 'Bg' in d['rois']
+    t = d['rois']['T']
+    assert t['lab_l'] is not None and t['od_g'] is not None
+    comb = d['combined']
+    assert comb.get('T_R_over_Bg_R') is not None
+    assert comb.get('T_R_minus_Bg_R') is not None
+    assert comb.get('deltaE_T_vs_Bg') is not None
+    # 主 ROI 兼容旧特征表
+    legacy = client.get(f'/api/pipeline/{iid}/features').get_json()['features']
+    assert legacy['hue'] is not None
+
+
+def test_p2b_roi_features_persisted(client):
+    iid = _upload_img(client, conc=50)
+    client.post(f'/api/images/{iid}/rois', json={'rois': ROIS_T_BG})
+    client.post(f'/api/images/{iid}/features', json={})
+    got = client.get(f'/api/images/{iid}/features').get_json()
+    assert set(got['rois'].keys()) == {'T', 'Bg'}
+    assert 'deltaE_T_vs_Bg' in got['combined']
+    assert got['combined']['T_G_over_Bg_G'] > 0
+
+
+def test_p2b_derive_delta_e_symmetric(client):
+    """色差 ΔE 应为对称且非负（Lab 空间欧氏距离）。"""
+    from app.image_processing import derive_combined_features
+    f1 = {'mean_r': 200, 'mean_g': 50, 'mean_b': 50, 'od_r': 0.1, 'od_g': 0.7, 'od_b': 0.7,
+          'lab_l': 60, 'lab_a': 70, 'lab_b': 40}
+    f2 = {'mean_r': 90, 'mean_g': 90, 'mean_b': 90, 'od_r': 0.5, 'od_g': 0.5, 'od_b': 0.5,
+          'lab_l': 70, 'lab_a': 0, 'lab_b': 0}
+    c1 = derive_combined_features({'T': f1, 'Bg': f2})
+    c2 = derive_combined_features({'T': f2, 'Bg': f1})
+    assert c1['deltaE_T_vs_Bg'] == c2['deltaE_T_vs_Bg']
+    assert c1['deltaE_T_vs_Bg'] > 0
+
+
+def test_p2b_features_require_roi(client):
+    iid = _upload_img(client)
+    r = client.post(f'/api/images/{iid}/features', json={})
+    assert r.status_code == 400
+    assert 'ROI' in r.get_json()['error']

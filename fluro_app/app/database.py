@@ -115,6 +115,17 @@ MIGRATIONS = [
         # 模板扩展：支持多 ROI 集合（JSON：{"T": {...}, "Bg": {...}}）
         """ALTER TABLE roi_templates ADD COLUMN template_json TEXT""",
     ]),
+    (5, [
+        # 每 ROI 扩展特征（问题2-B）：RGB 均值/中位数/SD、HSV、Lab、灰度、OD、通道比
+        """CREATE TABLE IF NOT EXISTS roi_features (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            image_id INTEGER NOT NULL,
+            roi_name TEXT NOT NULL,
+            features_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            UNIQUE(image_id, roi_name)
+        )""",
+    ]),
 ]
 
 

@@ -124,6 +124,107 @@ def extract_features(img_rgb, roi):
     }
 
 
+# ---------------- 问题2-B：单卡片多 ROI 扩展特征 ----------------
+
+def extract_roi_features(img_rgb, roi):
+    """提取单个 ROI 的完整比色特征（问题2 规格）。
+
+    返回：RGB 均值/中位数/标准差、HSV、CIELAB、灰度、光密度 OD、通道比。
+    """
+    crop = crop_roi(img_rgb, roi)
+    rgb = crop.reshape(-1, 3).astype(np.float64)
+    mean = rgb.mean(axis=0)
+    med = np.median(rgb, axis=0)
+    std = rgb.std(axis=0)
+    mean_r, mean_g, mean_b = mean[0], mean[1], mean[2]
+
+    hsv = cv2.cvtColor(crop, cv2.COLOR_RGB2HSV)
+    hue_rad = np.deg2rad(hsv[:, :, 0].astype(np.float64) * 2.0)
+    hue = float(np.rad2deg(np.arctan2(np.sin(hue_rad).mean(), np.cos(hue_rad).mean())) / 2.0)
+    if hue < 0:
+        hue += 180.0
+
+    lab = cv2.cvtColor(crop, cv2.COLOR_RGB2LAB).reshape(-1, 3).astype(np.float64)
+    l_mean, a_mean, b_mean = lab.mean(axis=0)
+
+    gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY).mean()
+
+    # 光密度 OD = -log10(I / I0)，I0 = 255（8bit 最大值）
+    od = -np.log10(np.clip(mean, 1.0, 255.0) / 255.0)
+
+    return {
+        'mean_r': round(float(mean_r), 3),
+        'mean_g': round(float(mean_g), 3),
+        'mean_b': round(float(mean_b), 3),
+        'median_r': round(float(med[0]), 3),
+        'median_g': round(float(med[1]), 3),
+        'median_b': round(float(med[2]), 3),
+        'std_r': round(float(std[0]), 3),
+        'std_g': round(float(std[1]), 3),
+        'std_b': round(float(std[2]), 3),
+        'hue': round(hue, 3),
+        'saturation': round(float(hsv[:, :, 1].mean()), 3),
+        'value': round(float(hsv[:, :, 2].mean()), 3),
+        'lab_l': round(float(l_mean), 3),
+        'lab_a': round(float(a_mean), 3),
+        'lab_b': round(float(b_mean), 3),
+        'gray': round(float(gray), 3),
+        'od_r': round(float(od[0]), 4),
+        'od_g': round(float(od[1]), 4),
+        'od_b': round(float(od[2]), 4),
+        'ratio_gr': round(float(mean_g) / (float(mean_r) + 1e-6), 4),
+        'ratio_gb': round(float(mean_g) / (float(mean_b) + 1e-6), 4),
+        'ratio_rb': round(float(mean_r) / (float(mean_b) + 1e-6), 4),
+        'intensity': round(float(hsv[:, :, 2].mean()), 3),
+    }
+
+
+def delta_e_lab(lab1, lab2):
+    """CIEDE 色差（简化 ΔE76）：sqrt(ΔL² + Δa² + Δb²)。"""
+    return float(np.sqrt((lab1[0] - lab2[0]) ** 2 + (lab1[1] - lab2[1]) ** 2 + (lab1[2] - lab2[2]) ** 2))
+
+
+def derive_combined_features(roi_feats, sample_names=('T', 'Bg')):
+    """由各 ROI 特征派生组合特征（问题2 规格）：
+
+    sample 与 background 之间的通道差值/比值、色差 ΔE（用 Lab）。
+    roi_feats: {roi_name: feats}。返回 combined dict（键带 ROI 名前缀）。
+    """
+    combined = {}
+    if not roi_feats:
+        return combined
+    bg = None
+    for key in ('Bg', 'background', 'Blank', 'blank'):
+        if key in roi_feats:
+            bg = roi_feats[key]
+            break
+    sample = None
+    sample_name = None
+    for rname, f in roi_feats.items():
+        if rname in ('Bg', 'background', 'Blank', 'blank'):
+            continue
+        sample, sample_name = f, rname
+        break
+    if sample is None and bg is None:
+        return combined
+    if bg is None:
+        bg = sample
+    if sample is None:
+        sample, sample_name = bg, 'T'
+    p = sample_name
+    for ch, k in (('R', 'mean_r'), ('G', 'mean_g'), ('B', 'mean_b')):
+        s = float(sample.get(k, 0))
+        b = float(bg.get(k, 0))
+        combined[f'{p}_{ch}_over_Bg_{ch}'] = round(s / (b + 1e-6), 4)
+        combined[f'{p}_{ch}_minus_Bg_{ch}'] = round(s - b, 3)
+        combined[f'OD_{p}_{ch}_minus_Bg_{ch}'] = round(float(sample.get('od_' + k[-1], 0)) - float(bg.get('od_' + k[-1], 0)), 4)
+    if 'lab_l' in sample and 'lab_l' in bg:
+        combined[f'deltaE_{p}_vs_Bg'] = round(delta_e_lab(
+            (sample['lab_l'], sample['lab_a'], sample['lab_b']),
+            (bg['lab_l'], bg['lab_a'], bg['lab_b'])), 3)
+    return combined
+
+
 def auto_detect_roi(img_rgb, margin_frac=0.06):
     """基于内容自动识别检测区：取亮/饱和（荧光）像素的最大连通域外接矩形。
 

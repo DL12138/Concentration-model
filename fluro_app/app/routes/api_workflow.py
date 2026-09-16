@@ -15,7 +15,8 @@ from .. import database as db
 from ..image_processing import (read_image, make_thumbnail, preprocess,
                                 extract_features, auto_roi,
                                 roi_to_pixels, crop_roi,
-                                auto_detect_roi, bg_ring_mean, apply_bg_subtraction)
+                                auto_detect_roi, bg_ring_mean, apply_bg_subtraction,
+                                extract_roi_features, derive_combined_features)
 
 bp = Blueprint('workflow', __name__, url_prefix='/api')
 
@@ -236,7 +237,7 @@ def delete_image(image_id):
     row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
     if not row:
         abort(404)
-    for tbl in ('features', 'roi', 'pipeline_steps', 'detections', 'calibration_points'):
+    for tbl in ('features', 'roi_features', 'roi', 'rois', 'pipeline_steps', 'detections', 'calibration_points'):
         db.execute(_db_path(), f'DELETE FROM {tbl} WHERE image_id=?', (image_id,))
     db.execute(_db_path(), 'DELETE FROM images WHERE id=?', (image_id,))
     for p in (row.get('file_path'), row.get('thumb_path'),
@@ -850,3 +851,104 @@ def get_features(image_id):
     if not row:
         return jsonify({'features': None})
     return jsonify({'features': row})
+
+
+# ---- 问题2-B：全 ROI 扩展特征 ----
+
+def _save_legacy_features(image_id, feats):
+    """主 ROI 兼容特征写入旧 features 表（检测/建模链路继续可用）。"""
+    db.execute(_db_path(),
+               'INSERT INTO features (image_id, mean_r, mean_g, mean_b, hue, saturation, value, '
+               'ratio_gr, ratio_bg, intensity, texture_entropy) VALUES (?,?,?,?,?,?,?,?,?,?,?) '
+               'ON CONFLICT(image_id) DO UPDATE SET mean_r=excluded.mean_r, mean_g=excluded.mean_g, '
+               'mean_b=excluded.mean_b, hue=excluded.hue, saturation=excluded.saturation, '
+               'value=excluded.value, ratio_gr=excluded.ratio_gr, ratio_bg=excluded.ratio_bg, '
+               'intensity=excluded.intensity, texture_entropy=excluded.texture_entropy, '
+               'updated_at=datetime(\'now\',\'localtime\')',
+               (image_id, feats['mean_r'], feats['mean_g'], feats['mean_b'], feats['hue'],
+                feats['saturation'], feats['value'], feats['ratio_gr'], feats['ratio_bg'],
+                feats['intensity'], feats['texture_entropy']))
+
+
+def _all_rois_for(image_id):
+    """读取该图全部 ROI（多 ROI 表优先，兼容旧单 ROI 表）。"""
+    rois = db.query(_db_path(), 'SELECT * FROM rois WHERE image_id=? ORDER BY id', (image_id,))
+    if rois:
+        return rois
+    old = db.query_one(_db_path(), 'SELECT * FROM roi WHERE image_id=?', (image_id,))
+    if old:
+        return [{'name': 'T', 'role': 'sample', 'x': old['x'], 'y': old['y'],
+                 'w': old['w'], 'h': old['h'], 'bg_subtract': old.get('bg_subtract') or 0}]
+    return []
+
+
+def compute_all_roi_features_core(image_id):
+    """计算全部命名 ROI 的扩展特征（问题2-B），存 roi_features 表并同步主 ROI 兼容特征。"""
+    row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
+    if not row:
+        raise KeyError(image_id)
+    img = _source_image(row)
+    if img is None:
+        raise ValueError('图像无法读取')
+    rois = _all_rois_for(image_id)
+    if not rois:
+        raise ValueError('请先设置 ROI（自动套用或手动框选）')
+    feats_map = {}
+    for r in rois:
+        rect = (r['x'], r['y'], r['w'], r['h'])
+        try:
+            f = extract_roi_features(img, rect)
+        except ValueError as e:
+            raise ValueError(f'ROI {r["name"]} 无效：{e}')
+        if r.get('bg_subtract'):
+            try:
+                f = apply_bg_subtraction(f, bg_ring_mean(img, rect))
+            except ValueError:
+                pass
+        feats_map[r['name']] = f
+        db.execute(_db_path(),
+                   'INSERT INTO roi_features (image_id, roi_name, features_json) VALUES (?,?,?) '
+                   'ON CONFLICT(image_id, roi_name) DO UPDATE SET features_json=excluded.features_json, '
+                   'updated_at=datetime(\'now\',\'localtime\')',
+                   (image_id, r['name'], json.dumps(f, ensure_ascii=False)))
+    combined = derive_combined_features(feats_map)
+    # 主 ROI 兼容特征写旧表
+    main = next((r for r in rois if r['role'] == 'sample'), rois[0])
+    legacy = extract_features(img, (main['x'], main['y'], main['w'], main['h']))
+    if main.get('bg_subtract'):
+        try:
+            legacy = apply_bg_subtraction(legacy, bg_ring_mean(img, (main['x'], main['y'], main['w'], main['h'])))
+        except ValueError:
+            pass
+    _save_legacy_features(image_id, legacy)
+    _upsert_step(image_id, 'feature', json.dumps({'rois': feats_map, 'combined': combined},
+                                                 ensure_ascii=False), 'ok')
+    return {'rois': feats_map, 'combined': combined}
+
+
+@bp.route('/images/<int:image_id>/features', methods=['POST'])
+def compute_image_features(image_id):
+    try:
+        res = compute_all_roi_features_core(image_id)
+    except KeyError:
+        abort(404)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'ok': True, **res})
+
+
+@bp.route('/images/<int:image_id>/features', methods=['GET'])
+def get_image_features(image_id):
+    row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
+    if not row:
+        abort(404)
+    rows = db.query(_db_path(), 'SELECT * FROM roi_features WHERE image_id=? ORDER BY roi_name',
+                    (image_id,))
+    feats_map = {}
+    for r in rows:
+        try:
+            feats_map[r['roi_name']] = json.loads(r['features_json'])
+        except Exception:  # noqa: BLE001
+            continue
+    combined = derive_combined_features(feats_map)
+    return jsonify({'rois': feats_map, 'combined': combined})
