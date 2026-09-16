@@ -529,6 +529,8 @@
       kernel: parseInt(document.getElementById('pp-kernel').value, 10),
       use_dark: document.getElementById('pp-dark').checked,
       use_flat: document.getElementById('pp-flat').checked,
+      use_wb: document.getElementById('pp-wb').checked,
+      wb_roi_name: document.getElementById('pp-wb-roi').value.trim() || undefined,
     };
     const status = document.getElementById('pp-status');
     try {

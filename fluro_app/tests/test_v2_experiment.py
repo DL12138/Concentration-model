@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import pytest  # noqa: E402
+import numpy as np  # noqa: E402
 
 from app import create_app  # noqa: E402
 from app import database as db  # noqa: E402
@@ -257,3 +258,53 @@ def test_p2b_features_require_roi(client):
     r = client.post(f'/api/images/{iid}/features', json={})
     assert r.status_code == 400
     assert 'ROI' in r.get_json()['error']
+
+
+# ============ 问题 2-C：白平衡 / 白参考校正 ============
+
+def test_p2c_white_balance_correct_unit():
+    from app.image_processing import white_balance_correct
+    import numpy as _np
+    img = _np.full((10, 10, 3), [100, 100, 100], dtype=_np.uint8)
+    # 白参考偏暗（如 Bg 暗背景）→ 增益 >1，图像提亮
+    brightened = white_balance_correct(img, [50, 50, 50])
+    assert int(brightened[0, 0, 0]) > 100
+    # 白参考接近 255 → 基本不变
+    unchanged = white_balance_correct(img, [250, 250, 250])
+    assert abs(int(unchanged[0, 0, 0]) - 100) <= 2
+
+
+def test_p2c_preprocess_with_white_balance(client):
+    iid = _upload_img(client, conc=50)
+    client.post(f'/api/images/{iid}/rois', json={'rois': ROIS_T_BG})
+    # 不开白平衡
+    r1 = client.post(f'/api/pipeline/{iid}/preprocess',
+                     json={'filter': 'gaussian', 'kernel': 5, 'use_dark': False, 'use_flat': False,
+                           'use_wb': False})
+    assert r1.status_code == 200
+    img1 = _decode_resp(client.get(f'/api/images/{iid}/processed'))
+    # 开白平衡（Bg 作白参考）
+    r2 = client.post(f'/api/pipeline/{iid}/preprocess',
+                     json={'filter': 'gaussian', 'kernel': 5, 'use_dark': False, 'use_flat': False,
+                           'use_wb': True, 'wb_roi_name': 'Bg'})
+    assert r2.status_code == 200
+    assert r2.get_json()['params']['use_wb'] is True
+    assert r2.get_json()['params']['wb_roi_name'] == 'Bg'
+    img2 = _decode_resp(client.get(f'/api/images/{iid}/processed'))
+    diff = np.abs(img1.astype(int) - img2.astype(int))
+    assert diff.mean() > 5, '白平衡校正未改变处理结果'
+
+
+def test_p2c_white_balance_requires_roi(client):
+    iid = _upload_img(client, conc=50)
+    r = client.post(f'/api/pipeline/{iid}/preprocess',
+                    json={'filter': 'gaussian', 'kernel': 5, 'use_wb': True})
+    assert r.status_code == 400
+    assert '白参考' in r.get_json()['error']
+
+
+def _decode_resp(resp):
+    import cv2 as _cv2
+    import numpy as _np
+    arr = _np.frombuffer(resp.data, dtype=_np.uint8)
+    return _cv2.imdecode(arr, _cv2.IMREAD_COLOR)[:, :, ::-1]

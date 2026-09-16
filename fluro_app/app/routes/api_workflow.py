@@ -16,7 +16,8 @@ from ..image_processing import (read_image, make_thumbnail, preprocess,
                                 extract_features, auto_roi,
                                 roi_to_pixels, crop_roi,
                                 auto_detect_roi, bg_ring_mean, apply_bg_subtraction,
-                                extract_roi_features, derive_combined_features)
+                                extract_roi_features, derive_combined_features,
+                                white_balance_correct)
 
 bp = Blueprint('workflow', __name__, url_prefix='/api')
 
@@ -407,10 +408,13 @@ def preprocess_image(image_id):
     kernel = body.get('kernel', current_app.config['DEFAULT_KERNEL'])
     use_dark = bool(body.get('use_dark', False))
     use_flat = bool(body.get('use_flat', False))
+    use_wb = bool(body.get('use_wb', False))
+    wb_roi_name = body.get('wb_roi_name')
     dark_path = body.get('dark_path')
     flat_path = body.get('flat_path')
     try:
-        return jsonify({'ok': True, **preprocess_core(image_id, method, kernel, use_dark, use_flat, dark_path, flat_path)})
+        return jsonify({'ok': True, **preprocess_core(image_id, method, kernel, use_dark, use_flat,
+                                                      dark_path, flat_path, use_wb, wb_roi_name)})
     except KeyError:
         abort(404)
     except ValueError as e:
@@ -418,8 +422,11 @@ def preprocess_image(image_id):
 
 
 def preprocess_core(image_id, method=None, kernel=None, use_dark=False, use_flat=False,
-                    dark_path=None, flat_path=None):
-    """预处理核心：读取原图 → 校正/去噪 → 保存处理图 → 写快照。无图抛 KeyError。"""
+                    dark_path=None, flat_path=None, use_wb=False, wb_roi_name=None):
+    """预处理核心：读取原图 → 校正/去噪 → 保存处理图 → 写快照。无图抛 KeyError。
+
+    use_wb + wb_roi_name：以指定命名 ROI（如 Bg 背景区）的平均色为白参考做白平衡增益校正。
+    """
     row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
     if not row:
         raise KeyError(image_id)
@@ -444,12 +451,39 @@ def preprocess_core(image_id, method=None, kernel=None, use_dark=False, use_flat
         raise ValueError(f'平场参考图无法读取：{flat_path}')
 
     out = preprocess(img, method=method, kernel=kernel, dark=dark, flat=flat)
+    wb_used = False
+    if use_wb:
+        wb_roi = None
+        if wb_roi_name:
+            wb_roi = db.query_one(_db_path(),
+                                  'SELECT * FROM rois WHERE image_id=? AND name=?',
+                                  (image_id, wb_roi_name))
+        if not wb_roi:
+            wb_roi = db.query_one(_db_path(),
+                                  "SELECT * FROM rois WHERE image_id=? AND role='background' "
+                                  "ORDER BY id LIMIT 1", (image_id,))
+        if not wb_roi:
+            main = _main_roi_rect(image_id)
+            if main:
+                wb_roi = {'x': main[1], 'y': main[2], 'w': main[3], 'h': main[4]}
+        if wb_roi:
+            try:
+                white = crop_roi(out, (wb_roi['x'], wb_roi['y'], wb_roi['w'], wb_roi['h']))
+                white_mean = white.reshape(-1, 3).mean(axis=0)
+                out = white_balance_correct(out, white_mean)
+                wb_used = True
+            except ValueError:
+                raise ValueError('白参考 ROI 无效，请检查 ROI 设置')
+        else:
+            raise ValueError('开启白平衡校正但未找到白参考 ROI：请先设置背景区（Bg）ROI')
+
     pdir = _img_dir('processed')
     pdir.mkdir(parents=True, exist_ok=True)
     out_path = pdir / f'{image_id}.png'
     cv2.imwrite(str(out_path), out[:, :, ::-1])
 
-    params = {'filter': method, 'kernel': kernel, 'use_dark': use_dark, 'use_flat': use_flat}
+    params = {'filter': method, 'kernel': kernel, 'use_dark': use_dark, 'use_flat': use_flat,
+              'use_wb': use_wb, 'wb_roi_name': wb_roi_name, 'wb_used': wb_used}
     _upsert_step(image_id, 'preprocess', json.dumps(params, ensure_ascii=False), 'ok')
 
     # 级联：预处理变更后重算下游（特征；检测结果在 M6 追加）

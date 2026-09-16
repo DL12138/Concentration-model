@@ -69,6 +69,17 @@ def preprocess(img_rgb, method='gaussian', kernel=5, dark=None, flat=None):
     return denoise(corrected, method=method, kernel=kernel)
 
 
+def white_balance_correct(img_rgb, white_rgb):
+    """白平衡增益校正（问题2-C）：R_corr = R_sample / R_white（通道级，归一化到 8bit）。
+
+    white_rgb: 白参考区域平均 RGB（如背景区/白纸/色卡白块）。返回 RGB uint8。
+    """
+    white = np.asarray(white_rgb, dtype=np.float32).reshape(3)
+    scale = 255.0 / np.clip(white, 1.0, 255.0)
+    out = img_rgb.astype(np.float32) * scale[None, None, :]
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
 # ---------------- M3：ROI 与特征 ----------------
 
 def roi_to_pixels(roi, shape):
