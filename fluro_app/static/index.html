@@ -279,6 +279,38 @@
         <h2>数据与设置</h2>
         <div class="md-grid">
           <div class="card">
+            <h3>实验信息（单卡片槽比色检测）</h3>
+            <p class="hint">记录实验背景；占位项请按你的实际情况填写，供后续建模特征与数据处理参考。</p>
+            <div class="form-row">
+              <label>待测物：<input id="ex-analyte" type="text" placeholder="如 某蛋白 / 某离子 / 某农药"></label>
+              <label>颜色变化趋势：<input id="ex-trend" type="text" placeholder="浓度越高 T 区越...（变黄/变浅/变深）"></label>
+            </div>
+            <div class="form-row">
+              <label>检测载体：
+                <select id="ex-carrier">
+                  <option value="single_card" selected>单卡片/试纸条</option>
+                  <option value="strip">试纸条</option>
+                </select>
+              </label>
+              <label>每图 ROI 数量：<input id="ex-roi-count" type="number" min="1" max="10"></label>
+              <label>ROI 名称（逗号分隔）：<input id="ex-roi-names" type="text" placeholder="T,Bg"></label>
+            </div>
+            <div class="form-row">
+              <label><input type="checkbox" id="ex-colorcard"> 有色卡（可用色卡做颜色校正）</label>
+              <label><input type="checkbox" id="ex-blankref"> 有空白参考区（Bg 背景区）</label>
+            </div>
+            <div class="form-row">
+              <label>已知浓度点（逗号分隔）：<input id="ex-concs" type="text" placeholder="0,1,2,5,10,20,50"></label>
+              <label>每浓度重复次数：<input id="ex-replicates" type="number" min="1" placeholder="如 3"></label>
+              <label>图片数量：<input id="ex-images" type="number" min="0" placeholder="可选"></label>
+            </div>
+            <div class="form-row">
+              <label>备注：<input id="ex-note" type="text" style="width:320px;"></label>
+              <button id="ex-save" class="btn primary">保存实验信息</button>
+              <span id="ex-status" class="status-line" style="margin:0;"></span>
+            </div>
+          </div>
+          <div class="card">
             <h3>检测判定限值</h3>
             <div class="form-row">
               <label>下限（ng/mL）：<input id="st-lower" type="number" step="any" placeholder="留空 = 无下限"></label>

@@ -29,6 +29,14 @@
       const resp = await fetch(url, { method: 'POST', body: formData });
       return handle(resp);
     },
+    async put(url, data) {
+      const resp = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data || {}),
+      });
+      return handle(resp);
+    },
     async del(url) {
       const resp = await fetch(url, { method: 'DELETE' });
       return handle(resp);
