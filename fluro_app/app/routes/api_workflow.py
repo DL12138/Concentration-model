@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """工作流相关 API：上传（M1）→ 预处理（M2）→ ROI/特征（M3）→ 流水线/结果（M4+）。"""
 import io
 import json
@@ -12,6 +12,7 @@ import numpy as np
 from flask import Blueprint, Response, current_app, jsonify, request, send_file, abort
 
 from .. import database as db
+from ..config import Config
 from ..image_processing import (read_image, make_thumbnail, preprocess,
                                 extract_features, auto_roi,
                                 roi_to_pixels, crop_roi,
@@ -93,6 +94,9 @@ def upload_images():
     if kind not in ('calibration', 'detection'):
         kind = 'detection'
     batch = (request.form.get('batch') or '').strip() or None
+    conc_unit = (request.form.get('conc_unit') or '').strip() or 'ng/mL'
+    if conc_unit not in Config.CONC_UNITS:
+        return jsonify({'error': f'不支持的浓度单位：{conc_unit}（可选：{"/".join(Config.CONC_UNITS)}）'}), 400
     conc_raw = (request.form.get('known_conc') or '').strip()
     known_conc = None
     if conc_raw:
@@ -116,14 +120,16 @@ def upload_images():
             continue
         img_id = db.execute(
             _db_path(),
-            'INSERT INTO images (file_path, thumb_path, kind, batch, known_conc, filename) VALUES (?,?,?,?,?,?)',
-            (raw_path, thumb_path, kind, batch, known_conc, filename),
+            'INSERT INTO images (file_path, thumb_path, kind, batch, known_conc, conc_unit, filename) '
+            'VALUES (?,?,?,?,?,?,?)',
+            (raw_path, thumb_path, kind, batch, known_conc, conc_unit, filename),
         )
         results.append({
             'id': img_id,
             'kind': kind,
             'batch': batch,
             'known_conc': known_conc,
+            'conc_unit': conc_unit,
             'filename': filename,
             'thumb_url': f'/api/images/{img_id}/thumb',
         })
@@ -166,6 +172,12 @@ def update_image_meta(image_id):
     if 'note' in body:
         sets.append('note=?')
         args.append((body.get('note') or '').strip() or None)
+    if 'conc_unit' in body:
+        cu = (body.get('conc_unit') or '').strip() or 'ng/mL'
+        if cu not in Config.CONC_UNITS:
+            return jsonify({'error': f'不支持的浓度单位：{cu}'}), 400
+        sets.append('conc_unit=?')
+        args.append(cu)
     if 'replicate' in body:
         rep_raw = body.get('replicate')
         try:

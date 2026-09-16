@@ -21,7 +21,7 @@
     }
     const jm = judgeMap[d.status] || [d.status, 'st-uploaded'];
     el.innerHTML =
-      '<div class="det-conc" style="font-size:26px;">' + Number(d.conc).toFixed(2) + ' <span class="det-unit">ng/mL</span></div>'
+      '<div class="det-conc" style="font-size:26px;">' + Number(d.conc).toFixed(2) + ' <span class="det-unit">' + esc(d.unit || 'ng/mL') + '</span></div>'
       + '<div class="det-u">U(95%) = ±' + Number(d.u).toFixed(2)
       + '　区间 [' + (d.conc - d.u).toFixed(2) + ', ' + (d.conc + d.u).toFixed(2) + ']</div>'
       + '<div class="det-judge" style="margin-top:6px;"><span class="gstatus ' + jm[1] + '">' + jm[0] + '</span></div>'

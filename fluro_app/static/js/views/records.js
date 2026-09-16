@@ -36,8 +36,9 @@
       el.innerHTML = '<div class="empty">没有匹配的记录。</div>';
       return;
     }
+    const unit = (rows[0] && (rows[0].unit || 'ng/mL')) || 'ng/mL';
     let html = '<table class="md-table"><thead><tr>'
-      + '<th>ID</th><th>图片</th><th>批次</th><th>浓度 C</th><th>U(95%)</th>'
+      + '<th>ID</th><th>图片</th><th>批次</th><th>浓度 C（' + esc(unit) + '）</th><th>U(95%)</th>'
       + '<th>区间</th><th>判定</th><th>时间</th><th>操作</th></tr></thead><tbody>';
     rows.forEach(function (r) {
       const jm = judgeMap[r.status] || [r.status, 'st-uploaded'];
@@ -96,7 +97,7 @@
     let snap;
     try { snap = JSON.parse(row.params_snapshot_json || '{}'); } catch (e) { snap = {}; }
     let html = '<div class="det-card" style="margin-top:10px;"><div class="det-main">'
-      + '<div class="det-conc" style="font-size:22px;">' + Number(row.conc).toFixed(2) + ' <span class="det-unit">ng/mL</span></div>'
+      + '<div class="det-conc" style="font-size:22px;">' + Number(row.conc).toFixed(2) + ' <span class="det-unit">' + esc(row.unit || 'ng/mL') + '</span></div>'
       + '<div class="det-u">U(95%) = ±' + Number(row.u).toFixed(2) + '</div></div>'
       + '<div class="det-meta">'
       + '<div>模型：' + esc(snap.model_name || '-') + '（' + esc(snap.model_type || '') + '，R²=' + ((snap.model_metrics && snap.model_metrics.r2) != null ? Number(snap.model_metrics.r2).toFixed(4) : '-') + '）</div>'

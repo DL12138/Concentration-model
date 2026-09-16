@@ -265,7 +265,7 @@
     data.forEach(function (p) {
       svg += '<circle cx="' + X(p[0]).toFixed(1) + '" cy="' + Y(p[1]).toFixed(1) + '" r="4" fill="#1d6fb8"/>';
     });
-    svg += '<text x="' + (W / 2) + '" y="' + (H - 8) + '" font-size="11" fill="#55636f" text-anchor="middle">浓度（ng/mL）</text>';
+    svg += '<text x="' + (W / 2) + '" y="' + (H - 8) + '" font-size="11" fill="#55636f" text-anchor="middle">浓度（' + (curResults && curResults.unit || 'ng/mL') + '）</text>';
     svg += '<text x="16" y="' + (H / 2) + '" font-size="11" fill="#55636f" text-anchor="middle" transform="rotate(-90 16 ' + (H / 2) + ')">特征值</text>';
     svg += '</svg>';
     el.innerHTML = svg;
@@ -291,6 +291,7 @@
       feature: curFeature,
       data: curResults.data,
       n: curResults.n,
+      unit: curResults.unit || 'ng/mL',
       preprocess: curResults.preprocess || {},   // 问题2-H：预处理元数据（检测反解用）
       saved_at: new Date().toISOString(),
     };
@@ -543,6 +544,8 @@
       fd.append('file', impFile.files[0]);
       fd.append('conc_col', document.getElementById('md-imp-conc').value);
       fd.append('feature_col', document.getElementById('md-imp-feat').value);
+      const impUnit = document.getElementById('md-imp-unit');
+      fd.append('unit', impUnit ? impUnit.value : 'ng/mL');
       impStatus.textContent = '导入中...';
       impStatus.className = 'status-line';
       try {
@@ -573,3 +576,4 @@
     init();
   }
 })(window);
+

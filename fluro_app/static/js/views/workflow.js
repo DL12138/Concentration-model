@@ -53,7 +53,7 @@
       const info = document.createElement('div');
       const nameParts = [];
       if (im.filename) nameParts.push(im.filename);
-      if (im.known_conc != null) nameParts.push('浓度 ' + im.known_conc);
+      if (im.known_conc != null) nameParts.push('浓度 ' + im.known_conc + (im.conc_unit ? ' ' + im.conc_unit : ''));
       else if (im.batch) nameParts.push('批次 ' + im.batch);
       info.textContent = nameParts.join(' · ');
       meta.appendChild(info);
@@ -184,11 +184,12 @@
         if (detImg.closest('div')) detImg.closest('div').style.display = '';
       }
       if (im && im.kind === 'calibration') {
+        const cu = im.conc_unit || 'ng/mL';
         zone.innerHTML = '<div class="card">'
           + '<h3>标定数据录入（写浓度 → 建模型）</h3>'
           + '<p class="hint">把这张标定图写入已知浓度并加入标定数据集；再到「标定建模」页拟合并保存生效模型。</p>'
           + '<div class="form-row">'
-          + '<label>浓度（ng/mL）：<input id="cal-conc" type="number" step="any" value="' + (im.known_conc != null ? im.known_conc : '') + '"></label>'
+          + '<label>浓度（' + esc(cu) + '）：<input id="cal-conc" type="number" step="any" value="' + (im.known_conc != null ? im.known_conc : '') + '"></label>'
           + '<button id="cal-add" class="btn primary">加入标定数据集</button>'
           + '<span id="cal-msg" class="status-line" style="margin:0;"></span>'
           + '</div><div id="cal-state"></div></div>';
@@ -228,7 +229,8 @@
     msg.textContent = '加入中...';
     try {
       const res = await global.API.post('/api/calibration/quick', { image_id: currentImageId, conc: parseFloat(conc) });
-      msg.textContent = '已加入浓度 ' + res.conc + (res.reused ? '（更新已有数据点）' : '') + '，请到「标定建模」页拟合并保存模型';
+      msg.textContent = '已加入浓度 ' + res.conc + ' ' + (res.unit || 'ng/mL')
+        + (res.reused ? '（更新已有数据点）' : '') + '，请到「标定建模」页拟合并保存模型';
       msg.className = 'status-line';
       loadCalState(currentImageId);
     } catch (e) {
@@ -286,7 +288,8 @@
       const saved = await global.API.post('/api/models', {
         name: name, type: fit.best, params: best.params,
         metrics: { r2: best.r2, rmse: best.rmse, lod: best.lod },
-        source_snapshot: { feature: fit.feature, data: fit.data, n: fit.n, preprocess: fit.preprocess },
+        source_snapshot: { feature: fit.feature, data: fit.data, n: fit.n,
+                           unit: fit.unit || 'ng/mL', preprocess: fit.preprocess },
       });
       msg.textContent = '模型已生成并生效：' + name + '（' + fit.best + '，R²=' + Number(best.r2).toFixed(4)
         + (best.lod == null ? '' : '，LOD=' + Number(best.lod).toFixed(3)) + '）';
@@ -332,9 +335,10 @@
     };
     const jm = judgeMap[d.status] || [d.status, 'st-uploaded'];
     const lim = d.limits || {};
+    const unit = d.unit || 'ng/mL';
     zone.innerHTML =
       '<div class="det-card"><div class="det-main">'
-      + '<div class="det-conc">' + Number(d.conc).toFixed(2) + ' <span class="det-unit">ng/mL</span></div>'
+      + '<div class="det-conc">' + Number(d.conc).toFixed(2) + ' <span class="det-unit">' + esc(unit) + '</span></div>'
       + '<div class="det-u">U(95%) = ±' + Number(d.u).toFixed(2) + ' &nbsp; 区间 [' + (d.conc - d.u).toFixed(2) + ', ' + (d.conc + d.u).toFixed(2) + ']</div>'
       + '<div class="det-judge"><span class="gstatus ' + jm[1] + '">' + jm[0] + '</span></div>'
       + '</div><div class="det-meta">'
@@ -768,6 +772,8 @@
       fd.append('batch', document.getElementById('up-batch').value || '');
       if (kind.value === 'calibration') {
         fd.append('known_conc', document.getElementById('up-conc').value || '');
+        const unitSel = document.getElementById('up-conc-unit');
+        fd.append('conc_unit', unitSel ? unitSel.value : 'ng/mL');
       }
       btn.disabled = true;
       status.textContent = '上传中（' + files.length + ' 个文件）...';

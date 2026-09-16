@@ -83,7 +83,15 @@
               </select>
             </label>
             <label>批次号：<input id="up-batch" type="text" placeholder="如 2026-09-16-01"></label>
-            <label id="up-conc-wrap" style="display:none;">已知浓度（ng/mL）：<input id="up-conc" type="number" step="any" placeholder="必填"></label>
+            <label id="up-conc-wrap" style="display:none;">已知浓度：<input id="up-conc" type="number" step="any" placeholder="必填">
+              <select id="up-conc-unit">
+                <option value="ng/mL">ng/mL</option>
+                <option value="μg/mL">μg/mL</option>
+                <option value="mg/mL">mg/mL</option>
+                <option value="μmol/L">μmol/L</option>
+                <option value="mmol/L">mmol/L</option>
+                <option value="mol/L">mol/L</option>
+              </select></label>
             <label>图片：<input id="up-files" type="file" accept="image/*" multiple></label>
             <button id="up-btn" class="btn primary">上传</button>
             <button id="up-dir-btn" class="btn">导入文件夹</button>
@@ -278,6 +286,16 @@
             <div class="form-row">
               <label>浓度列：<select id="md-imp-conc"></select></label>
               <label>特征列：<select id="md-imp-feat"></select></label>
+              <label>浓度单位：
+                <select id="md-imp-unit">
+                  <option value="ng/mL">ng/mL</option>
+                  <option value="μg/mL">μg/mL</option>
+                  <option value="mg/mL">mg/mL</option>
+                  <option value="μmol/L">μmol/L</option>
+                  <option value="mmol/L">mmol/L</option>
+                  <option value="mol/L">mol/L</option>
+                </select>
+              </label>
               <button id="md-import-go" class="btn primary">导入</button>
               <span id="md-imp-status" class="status-line" style="margin:0;"></span>
             </div>

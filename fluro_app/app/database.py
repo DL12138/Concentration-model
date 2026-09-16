@@ -141,6 +141,12 @@ MIGRATIONS = [
         """ALTER TABLE calibration_points ADD COLUMN feature_name TEXT""",
         """ALTER TABLE calibration_points ADD COLUMN source TEXT NOT NULL DEFAULT 'app'""",
     ]),
+    (9, [
+        # 第四批问题2：浓度单位选项（上传标定浓度时可选 μmol/L 等）
+        """ALTER TABLE images ADD COLUMN conc_unit TEXT NOT NULL DEFAULT 'ng/mL'""",
+        """ALTER TABLE calibration_groups ADD COLUMN unit TEXT NOT NULL DEFAULT 'ng/mL'""",
+        """ALTER TABLE detections ADD COLUMN unit TEXT NOT NULL DEFAULT 'ng/mL'""",
+    ]),
 ]
 
 

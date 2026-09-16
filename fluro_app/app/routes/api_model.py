@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """标定建模 API（M5）：浓度分组、数据点纳入/剔除、多模型拟合、模型库管理。"""
 import csv
 import io
@@ -9,6 +9,7 @@ from flask import Blueprint, current_app, jsonify, request, abort, send_file
 
 from .. import database as db
 from .. import modeling
+from ..config import Config
 
 bp = Blueprint('model', __name__, url_prefix='/api')
 
@@ -42,7 +43,7 @@ def _collect_calibration_data(feature=None):
     rows = db.query(_db_path(),
                     'SELECT cp.id AS point_id, cp.group_id, cp.included, cp.image_id, '
                     'cp.feature_value, cp.feature_name, cp.source, '
-                    'cg.conc, cg.name AS group_name, f.* '
+                    'cg.conc, cg.name AS group_name, cg.unit, f.* '
                     'FROM calibration_points cp '
                     'JOIN calibration_groups cg ON cg.id = cp.group_id '
                     'LEFT JOIN features f ON f.image_id = cp.image_id '
@@ -51,7 +52,8 @@ def _collect_calibration_data(feature=None):
     xs, ys, points = [], [], []
     for r in rows:
         groups_map.setdefault(r['group_id'], {
-            'id': r['group_id'], 'name': r['group_name'], 'conc': r['conc'], 'points': [],
+            'id': r['group_id'], 'name': r['group_name'], 'conc': r['conc'],
+            'unit': r.get('unit') or 'ng/mL', 'points': [],
         })
         feat = r.get('feature_value')
         if feat is None:
@@ -134,6 +136,9 @@ def modeling_import():
     f = request.files.get('file')
     conc_col = (request.form.get('conc_col') or '').strip()
     feat_col = (request.form.get('feature_col') or '').strip()
+    unit = (request.form.get('unit') or '').strip() or 'ng/mL'
+    if unit not in Config.CONC_UNITS:
+        return jsonify({'error': f'不支持的浓度单位：{unit}'}), 400
     if not f:
         return jsonify({'error': '未收到文件'}), 400
     if not conc_col or not feat_col:
@@ -162,8 +167,8 @@ def modeling_import():
             continue
         if conc not in groups:
             gid = db.execute(_db_path(),
-                             'INSERT INTO calibration_groups (name, conc) VALUES (?,?)',
-                             (f'{Path(f.filename).stem} @ {conc}', conc))
+                             'INSERT INTO calibration_groups (name, conc, unit) VALUES (?,?,?)',
+                             (f'{Path(f.filename).stem} @ {conc}', conc, unit))
             groups[conc] = gid
         db.execute(_db_path(),
                    'INSERT INTO calibration_points (group_id, image_id, included, feature_value, feature_name, source) '
@@ -281,13 +286,15 @@ def quick_calibrate():
     feat = db.query_one(_db_path(), 'SELECT * FROM features WHERE image_id=?', (image_id,))
     if not feat:
         return jsonify({'error': '该图尚无特征，请先完成 ROI 与特征提取'}), 400
+    unit = (img.get('conc_unit') or '').strip() or 'ng/mL'
     grp = db.query_one(_db_path(), 'SELECT id FROM calibration_groups WHERE conc=?', (conc,))
     if grp:
         gid = grp['id']
+        db.execute(_db_path(), 'UPDATE calibration_groups SET unit=? WHERE id=?', (unit, gid))
     else:
         gid = db.execute(_db_path(),
-                         'INSERT INTO calibration_groups (name, conc) VALUES (?,?)',
-                         (f'C{conc:g}', conc))
+                         'INSERT INTO calibration_groups (name, conc, unit) VALUES (?,?,?)',
+                         (f'C{conc:g}', conc, unit))
     dup = db.query_one(_db_path(), 'SELECT id FROM calibration_points WHERE image_id=?', (image_id,))
     if dup:
         db.execute(_db_path(),
@@ -299,7 +306,7 @@ def quick_calibrate():
                          'INSERT INTO calibration_points (group_id, image_id, included) VALUES (?,?,1)',
                          (gid, image_id))
         reused = False
-    return jsonify({'ok': True, 'group_id': gid, 'point_id': pid, 'conc': conc, 'reused': reused})
+    return jsonify({'ok': True, 'group_id': gid, 'point_id': pid, 'conc': conc, 'unit': unit, 'reused': reused})
 
 
 @bp.route('/calibration/points/<int:pid>', methods=['POST'])
@@ -340,7 +347,8 @@ def fit_calibration():
     if len(xs) < 3 or len(set(xs)) < 3:
         return jsonify({'error': '预处理后有效标定点不足（至少 3 个不同浓度），请调整预处理或补充数据'}), 400
     results = modeling.fit_all_models(xs, ys)
-    best = modeling.best_model(results)
+    # best 仅从可保存/可反解的主模型中选取（SVR/随机森林为对比模型不可保存）
+    best = modeling.best_model({k: r for k, r in results.items() if not r.get('compare')})
     xmin, xmax = min(xs), max(xs)
     for mt, r in results.items():
         if 'error' not in r and not r.get('compare'):
@@ -350,6 +358,7 @@ def fit_calibration():
     return jsonify({
         'ok': True,
         'feature': feature,
+        'unit': (groups[0].get('unit') if groups else None) or 'ng/mL',
         'n': len(xs),
         'results': results,
         'best': best[0] if best else None,
@@ -731,6 +740,7 @@ def run_detection(image_id):
     upper = _num_setting('limit_upper')
     status = _judge(res['conc'], res['u'], lower, upper)
 
+    unit = (snap.get('unit') or '').strip() or 'ng/mL'
     full_snapshot = {
         'model_id': model['id'],
         'model_name': model['name'],
@@ -747,21 +757,21 @@ def run_detection(image_id):
     existing = db.query_one(_db_path(), 'SELECT id FROM detections WHERE image_id=?', (image_id,))
     if existing:
         db.execute(_db_path(),
-                   'UPDATE detections SET model_id=?, conc=?, u=?, status=?, params_snapshot_json=?, '
-                   'batch=?, created_at=datetime(\'now\',\'localtime\') WHERE image_id=?',
-                   (model['id'], res['conc'], res['u'], status,
+                   'UPDATE detections SET model_id=?, conc=?, u=?, status=?, unit=?, '
+                   'params_snapshot_json=?, batch=?, created_at=datetime(\'now\',\'localtime\') WHERE image_id=?',
+                   (model['id'], res['conc'], res['u'], status, unit,
                     json.dumps(full_snapshot, ensure_ascii=False), row['batch'], image_id))
         det_id = existing['id']
     else:
         det_id = db.execute(_db_path(),
-                            'INSERT INTO detections (image_id, model_id, conc, u, status, params_snapshot_json, batch) '
-                            'VALUES (?,?,?,?,?,?,?)',
-                            (image_id, model['id'], res['conc'], res['u'], status,
+                            'INSERT INTO detections (image_id, model_id, conc, u, status, unit, params_snapshot_json, batch) '
+                            'VALUES (?,?,?,?,?,?,?,?)',
+                            (image_id, model['id'], res['conc'], res['u'], status, unit,
                              json.dumps(full_snapshot, ensure_ascii=False), row['batch']))
     _upsert_step(image_id, 'result', json.dumps({'conc': res['conc'], 'u': res['u'], 'status': status},
                                                 ensure_ascii=False), 'ok')
     return {
-        'id': det_id, 'image_id': image_id, 'conc': res['conc'], 'u': res['u'],
+        'id': det_id, 'image_id': image_id, 'conc': res['conc'], 'u': res['u'], 'unit': unit,
         'status': status, 'feature': feature, 'feature_value': fval,
         'model_name': model['name'], 'model_r2': metrics.get('r2'),
         'limits': {'lower': lower, 'upper': upper},
@@ -863,6 +873,7 @@ def home_summary():
         'n_points': points['n'] if points else 0,
         'last_detection': {
             'image_id': last['image_id'], 'conc': last['conc'], 'u': last['u'],
+            'unit': last.get('unit') or 'ng/mL',
             'status': last['status'], 'model_name': last['model_name'],
             'created_at': last['created_at'],
         } if last else None,
@@ -903,4 +914,5 @@ def export_detections():
     resp = current_app.response_class(buf.getvalue(), mimetype='text/csv; charset=utf-8')
     resp.headers['Content-Disposition'] = 'attachment; filename=detections.csv'
     return resp
+
 
