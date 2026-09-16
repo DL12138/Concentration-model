@@ -62,6 +62,39 @@
       + '<div class="det-meta" style="margin-top:8px;">当前批次：' + esc(s.current_batch || '-') + '</div>';
   }
 
+  function renderWf(s) {
+    const el = document.getElementById('home-wf');
+    const meta = document.getElementById('home-wf-meta');
+    const wf = s.workflow_steps;
+    if (!wf) {
+      el.innerHTML = '<div class="empty">暂无检测记录。完成一次检测后，这里会展示该图在「上传→预处理→通道分离→ROI」各步的处理图像。</div>';
+      meta.textContent = '';
+      return;
+    }
+    meta.textContent = '图片 #' + wf.image_id;
+    let html = '<div style="display:flex;gap:10px;flex-wrap:wrap;">';
+    const items = [
+      { label: '① 上传原图', url: wf.upload },
+    ];
+    if (wf.preprocess) items.push({ label: '② 预处理后', url: wf.preprocess });
+    if (wf.channels) {
+      (['r', 'g', 'b']).forEach(function (ch) {
+        if (wf.channels[ch]) items.push({ label: '③ 通道 ' + ch.toUpperCase(), url: wf.channels[ch] });
+      });
+    }
+    if (wf.roi) items.push({ label: '④ ROI 叠加', url: wf.roi });
+    items.forEach(function (it) {
+      html += '<div style="text-align:center;max-width:150px;">'
+        + '<a href="' + it.url + '" target="_blank" rel="noopener">'
+        + '<img src="' + it.url + '?t=' + Date.now() + '" alt="' + esc(it.label) + '"'
+        + ' style="width:150px;height:110px;object-fit:cover;border:1px solid #d9e2ea;border-radius:6px;display:block;"></a>'
+        + '<div style="font-size:12px;color:#55636f;margin-top:4px;">' + esc(it.label) + '</div>'
+        + '</div>';
+    });
+    html += '</div>';
+    el.innerHTML = html;
+  }
+
   async function refresh() {
     try {
       const s = await global.API.get('/api/home/summary');
@@ -69,6 +102,7 @@
       renderCalib(s);
       renderModel(s);
       renderToday(s);
+      renderWf(s);
     } catch (e) {
       document.getElementById('home-last').innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>';
     }

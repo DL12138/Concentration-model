@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """标定建模 API（M5）：浓度分组、数据点纳入/剔除、多模型拟合、模型库管理。"""
 import csv
 import io
@@ -836,6 +836,23 @@ def home_summary():
                          "SELECT COUNT(*) AS n FROM images WHERE date(created_at)=date('now','localtime')")
     total_det = db.query_one(_db_path(), 'SELECT COUNT(*) AS n FROM detections')
     batch = db.get_setting(_db_path(), 'current_batch')
+
+    # 问题1：最近检测图的工作流每步图像（原图/预处理/通道分离/ROI 叠加）
+    dd = Path(data_dir)
+    wf_steps = None
+    if last:
+        iid = last['image_id']
+        wf_steps = {'image_id': iid, 'upload': f'/api/images/{iid}/original'}
+        if (dd / 'processed' / f'{iid}.png').exists():
+            wf_steps['preprocess'] = f'/api/images/{iid}/processed'
+        ch = {}
+        for ch_name in 'rgb':
+            if (dd / 'processed' / 'channels' / f'{iid}_{ch_name}.png').exists():
+                ch[ch_name] = f'/api/images/{iid}/channel/{ch_name}'
+        if ch:
+            wf_steps['channels'] = ch
+        wf_steps['roi'] = f'/api/images/{iid}/overlay'
+
     return jsonify({
         'model_name': model['name'] if model else None,
         'model_type': model['type'] if model else None,
@@ -849,6 +866,7 @@ def home_summary():
             'status': last['status'], 'model_name': last['model_name'],
             'created_at': last['created_at'],
         } if last else None,
+        'workflow_steps': wf_steps,
         'today_count': today['n'] if today else 0,
         'total_detections': total_det['n'] if total_det else 0,
         'current_batch': batch,
@@ -885,3 +903,4 @@ def export_detections():
     resp = current_app.response_class(buf.getvalue(), mimetype='text/csv; charset=utf-8')
     resp.headers['Content-Disposition'] = 'attachment; filename=detections.csv'
     return resp
+
