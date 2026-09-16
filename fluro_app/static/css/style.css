@@ -122,6 +122,7 @@ h3 { font-size:15px; color:#1f2d3a; }
 .feat-table .dash { color:#8a97a3; }
 .algo-list { margin:8px 0 0; padding-left:18px; font-size:13px; line-height:1.9; color:#3c4c5a; }
 .algo-list li b { color:#0f7668; }
+.det-actions { display:flex; gap:10px; margin-top:10px; }
 .feat-imgs, .result-imgs { display:flex; flex-wrap:wrap; gap:14px; margin-top:12px; }
 .feat-imgs figure, .result-imgs figure { margin:0; max-width:280px; }
 .feat-imgs img, .result-imgs img { display:block; max-width:280px; max-height:210px; border:1px solid #dfe6ec; border-radius:8px; background:#f6f8fa; }

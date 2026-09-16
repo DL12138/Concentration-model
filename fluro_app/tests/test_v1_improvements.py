@@ -300,3 +300,55 @@ def test_p6_features_available_after_roi(client):
     for key in ('mean_r', 'mean_g', 'mean_b', 'hue', 'saturation', 'value', 'ratio_gr', 'ratio_bg', 'intensity', 'texture_entropy'):
         assert f[key] is not None, f'{key} 缺失'
     assert f['ratio_gr'] > 0 and f['texture_entropy'] >= 0
+
+
+# ============ 问题 7a：结果界面保存按钮 ============
+
+def _make_active_model(client, concs=(20, 50, 80)):
+    """构造三浓度标定数据并保存生效模型。返回 (iids, model_id)。"""
+    iids = []
+    for c in concs:
+        iid = _upload(client, conc=c, kind='calibration')
+        _pipeline(client, [iid])
+        g = client.post('/api/calibration/groups', json={'conc': c}).get_json()
+        client.post('/api/calibration/points', json={'image_id': iid, 'group_id': g['id']})
+        iids.append(iid)
+    fit = client.post('/api/calibration/fit', json={'feature': 'hue'}).get_json()
+    r = fit['results'][fit['best']]
+    m = client.post('/api/models', json={
+        'name': 'M', 'type': fit['best'], 'params': r['params'],
+        'metrics': {'r2': r['r2'], 'rmse': r['rmse'], 'lod': r.get('lod')},
+        'source_snapshot': {'feature': 'hue', 'data': fit['data'], 'n': fit['n']},
+    }).get_json()
+    return iids, m['id']
+
+
+def test_p7a_detect_result_saved_with_id(client):
+    _make_active_model(client)
+    iid = _upload(client, conc=50)
+    _pipeline(client, [iid])
+    r = client.post(f'/api/detect/{iid}', json={})
+    assert r.status_code == 200
+    d = r.get_json()['detection']
+    assert d['id'] and d['conc'] is not None
+    rows = client.get('/api/detections').get_json()['detections']
+    assert any(x['image_id'] == iid for x in rows)
+
+
+def test_p7a_save_result_is_idempotent(client):
+    _make_active_model(client)
+    iid = _upload(client, conc=50)
+    _pipeline(client, [iid])
+    id1 = client.post(f'/api/detect/{iid}', json={}).get_json()['detection']['id']
+    id2 = client.post(f'/api/detect/{iid}', json={}).get_json()['detection']['id']
+    assert id1 == id2, '重复保存不应产生新记录'
+    rows = client.get('/api/detections').get_json()['detections']
+    assert sum(1 for x in rows if x['image_id'] == iid) == 1
+
+
+def test_p7a_no_result_before_detect(client):
+    """未检测前结果列表无该图记录（结果面板显示「尚未检测」的依据）。"""
+    iid = _upload(client, conc=50)
+    _pipeline(client, [iid])
+    rows = client.get('/api/detections').get_json()['detections']
+    assert not any(x['image_id'] == iid for x in rows)

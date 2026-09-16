@@ -172,7 +172,8 @@
     try {
       const res = await global.API.post('/api/detect/' + currentImageId, {});
       renderDetection(res);
-      status.textContent = '检测完成（' + new Date().toLocaleString() + '）';
+      status.textContent = '检测完成，已保存记录 #' + res.detection.id + '（' + new Date().toLocaleString() + '）';
+      status.className = 'status-line';
       if (global.FluroApp) global.FluroApp.refreshTopbar();
     } catch (e) {
       status.textContent = '检测失败：' + e.message;
@@ -202,8 +203,28 @@
       + '<div>限值：' + (lim.lower == null ? '无' : lim.lower) + ' ~ ' + (lim.upper == null ? '无' : lim.upper) + '</div>'
       + (d.from_history ? '<div class="hint">该结果为历史记录（ROI/预处理变更会自动重算）</div>' : '')
       + '</div></div>'
-      + '<button id="det-run" class="btn primary" style="margin-top:10px;">重新检测</button>';
+      + '<div class="det-actions">'
+      + '<button id="det-save" class="btn">' + (d.id ? '保存结果（更新记录 #' + d.id + '）' : '保存结果') + '</button>'
+      + '<button id="det-run" class="btn primary">重新检测</button>'
+      + '</div>';
+    document.getElementById('det-save').addEventListener('click', saveDetectResult);
     document.getElementById('det-run').addEventListener('click', runDetect);
+  }
+
+  async function saveDetectResult() {
+    if (!currentImageId) return;
+    const status = document.getElementById('det-status');
+    status.textContent = '保存中...';
+    try {
+      const res = await global.API.post('/api/detect/' + currentImageId, {});
+      renderDetection(res);
+      status.textContent = '已保存到检测记录 #' + res.detection.id + '（' + new Date().toLocaleString() + '）';
+      status.className = 'status-line';
+      if (global.FluroApp) global.FluroApp.refreshTopbar();
+    } catch (e) {
+      status.textContent = '保存失败：' + e.message;
+      status.className = 'status-line err';
+    }
   }
 
   // ---- M3：ROI ----
