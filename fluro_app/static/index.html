@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>荧光浓度建模 APP</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div class="brand">荧光浓度建模 <span class="brand-sub">本地版</span></div>
+    <div class="top-stats" id="top-stats">
+      <span class="stat">模型：<b id="ts-model">-</b></span>
+      <span class="stat">R²：<b id="ts-r2">-</b></span>
+      <span class="stat">批次：<b id="ts-batch">-</b></span>
+      <span class="stat">数据目录：<b id="ts-dir">-</b></span>
+      <span class="stat">今日：<b id="ts-today">-</b> 条</span>
+    </div>
+  </header>
+  <div id="body">
+    <nav id="sidebar">
+      <div class="nav-item active" data-view="home">首页总览</div>
+      <div class="nav-item" data-view="workflow">检测工作流</div>
+      <div class="nav-item sub">上传 · 预处理 · ROI · 特征 · 结果</div>
+      <div class="nav-item" data-view="modeling">标定建模</div>
+      <div class="nav-item" data-view="records">检测记录</div>
+      <div class="nav-item" data-view="settings">数据与设置</div>
+    </nav>
+    <main id="main">
+
+      <!-- ===== 首页总览 ===== -->
+      <section class="view active" id="view-home">
+        <h2>首页总览</h2>
+        <div class="home-grid">
+          <div class="card home-card">
+            <h3>最近检测结果</h3>
+            <div id="home-last"></div>
+          </div>
+          <div class="card home-card">
+            <h3>标定曲线状态</h3>
+            <div id="home-calib"></div>
+          </div>
+          <div class="card home-card">
+            <h3>生效模型</h3>
+            <div id="home-model"></div>
+          </div>
+          <div class="card home-card">
+            <h3>今日概览</h3>
+            <div id="home-today"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 检测工作流 ===== -->
+      <section class="view" id="view-workflow">
+        <h2>检测工作流</h2>
+        <div id="wf-steps">
+          <div class="wf-step done" data-wf="1"><span class="snum">1</span>上传</div>
+          <div class="wf-step" data-wf="2"><span class="snum">2</span>预处理</div>
+          <div class="wf-step" data-wf="3"><span class="snum">3</span>ROI 分割</div>
+          <div class="wf-step" data-wf="4"><span class="snum">4</span>特征提取</div>
+          <div class="wf-step" data-wf="5"><span class="snum">5</span>结果</div>
+        </div>
+        <!-- 步骤 1：上传 -->
+        <div class="wf-panel" id="wf-panel-1">
+          <div class="panel-head">
+            <h3>① 上传试纸图像</h3>
+            <p class="hint">支持批量导入；上传后自动进入流水线（后续阶段接入）。标定图需填写已知浓度。</p>
+          </div>
+          <div class="form-row">
+            <label>用途：
+              <select id="up-kind">
+                <option value="detection">检测</option>
+                <option value="calibration">标定</option>
+              </select>
+            </label>
+            <label>批次号：<input id="up-batch" type="text" placeholder="如 2026-09-16-01"></label>
+            <label id="up-conc-wrap" style="display:none;">已知浓度（ng/mL）：<input id="up-conc" type="number" step="any" placeholder="必填"></label>
+            <label>图片：<input id="up-files" type="file" accept="image/*" multiple></label>
+            <button id="up-btn" class="btn primary">上传</button>
+          </div>
+          <div id="up-status" class="status-line"></div>
+          <div id="pipe-status" class="pipe-status"></div>
+          <div id="up-gallery" class="gallery"></div>
+        </div>
+        <!-- 步骤 2：预处理 -->
+        <div class="wf-panel" id="wf-panel-2" style="display:none;">
+          <div class="panel-head">
+            <h3>② 图像预处理</h3>
+            <p class="hint">先在上方缩略图墙点击一张图选中；调节暗场/平场与去噪参数后点「重跑本步」，拖动滑块对比前后效果。</p>
+          </div>
+          <div class="form-row">
+            <label>滤波：
+              <select id="pp-filter">
+                <option value="gaussian">高斯</option>
+                <option value="median">中值</option>
+              </select>
+            </label>
+            <label>核大小：
+              <select id="pp-kernel">
+                <option value="3">3</option>
+                <option value="5" selected>5</option>
+                <option value="7">7</option>
+              </select>
+            </label>
+            <label><input type="checkbox" id="pp-dark"> 暗场校正</label>
+            <label><input type="checkbox" id="pp-flat"> 平场校正</label>
+            <button id="pp-ref-dark" class="btn small">上传暗场参考图</button>
+            <button id="pp-ref-flat" class="btn small">上传平场参考图</button>
+            <button id="pp-run" class="btn primary">重跑本步</button>
+          </div>
+          <div id="pp-status" class="status-line"></div>
+          <div id="pp-compare" class="compare" style="display:none;">
+            <div class="compare-box" id="pp-compare-box">
+              <img id="pp-img-orig" alt="原图">
+              <div class="compare-overlay" id="pp-overlay"><img id="pp-img-proc" alt="处理后"></div>
+              <input type="range" id="pp-slider" min="0" max="100" value="50">
+            </div>
+            <div class="compare-labels"><span>原图</span><span>处理后</span></div>
+          </div>
+        </div>
+        <!-- 步骤 3：ROI 分割 -->
+        <div class="wf-panel" id="wf-panel-3" style="display:none;">
+          <div class="panel-head">
+            <h3>③ ROI 分割</h3>
+            <p class="hint">点击「自动套用模板」按已存模板定位；也可在图上直接框选/拖动/缩放修正，然后「保存修正」。首次使用可框选后「存为模板」。</p>
+          </div>
+          <div class="form-row">
+            <button id="roi-auto" class="btn">自动套用模板</button>
+            <button id="roi-save" class="btn primary">保存修正</button>
+            <button id="roi-save-tpl" class="btn">存为模板</button>
+            <label>模板：<select id="roi-tpl-select"></select></label>
+          </div>
+          <div id="roi-status" class="status-line"></div>
+          <div class="roi-canvas-wrap"><canvas id="roi-canvas" width="640" height="480"></canvas></div>
+        </div>
+        <!-- 步骤 4：特征提取 -->
+        <div class="wf-panel" id="wf-panel-4" style="display:none;">
+          <div class="panel-head">
+            <h3>④ 特征提取</h3>
+            <p class="hint">检测区颜色与纹理特征；ROI 修正后自动重算。</p>
+          </div>
+          <div id="feat-status" class="status-line"></div>
+          <button id="feat-run" class="btn">重新提取特征</button>
+          <table class="feat-table" id="feat-table">
+            <thead>
+              <tr>
+                <th>平均 R</th><th>平均 G</th><th>平均 B</th><th>色相</th><th>饱和度</th>
+                <th>明度</th><th>G/R</th><th>B/G</th><th>强度</th><th>纹理熵</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr id="feat-row">
+                <td class="dash">-</td><td class="dash">-</td><td class="dash">-</td><td class="dash">-</td>
+                <td class="dash">-</td><td class="dash">-</td><td class="dash">-</td><td class="dash">-</td>
+                <td class="dash">-</td><td class="dash">-</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- 步骤 5：结果 -->
+        <div class="wf-panel" id="wf-panel-5" style="display:none;">
+          <div class="panel-head">
+            <h3>⑤ 浓度检测结果</h3>
+            <p class="hint">依据生效标定模型反解浓度，U 为 95% 预测区间半宽。</p>
+          </div>
+          <div id="det-status" class="status-line"></div>
+          <div id="det-zone"></div>
+        </div>
+      </section>
+
+      <!-- ===== 标定建模 ===== -->
+      <section class="view" id="view-modeling">
+        <h2>标定建模</h2>
+        <div class="card">
+          <div class="form-row">
+            <label>拟合特征：
+              <select id="md-feature">
+                <option value="hue" selected>色相</option>
+                <option value="saturation">饱和度</option>
+                <option value="value">明度</option>
+                <option value="ratio_gr">G/R 通道比</option>
+                <option value="ratio_bg">B/G 通道比</option>
+                <option value="mean_r">平均 R</option>
+                <option value="mean_g">平均 G</option>
+                <option value="mean_b">平均 B</option>
+                <option value="intensity">强度</option>
+              </select>
+            </label>
+            <button id="md-fit" class="btn primary">拟合全部模型</button>
+            <button id="md-save" class="btn">保存所选为生效模型</button>
+            <span id="md-status" class="status-line" style="margin:0;"></span>
+          </div>
+        </div>
+        <div class="md-grid">
+          <div class="card" id="md-data-card">
+            <h3>标定数据分组</h3>
+            <div id="md-pending"></div>
+            <div id="md-data"></div>
+          </div>
+          <div class="card" id="md-models-card">
+            <h3>模型对比（R² / RMSE / LOD）</h3>
+            <div id="md-models"></div>
+            <h3 style="margin-top:16px;">已保存模型</h3>
+            <div id="md-saved"></div>
+          </div>
+          <div class="card" id="md-curve-card" style="grid-column:1 / -1;">
+            <h3>标定曲线 <span id="md-curve-title" style="font-size:12px;color:#8a97a3;"></span></h3>
+            <div id="md-curve"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 检测记录 ===== -->
+      <section class="view" id="view-records">
+        <h2>检测记录</h2>
+        <div class="card">
+          <div class="form-row">
+            <label>关键词：<input id="rec-q" type="text" placeholder="批次号或判定（within/above...）"></label>
+            <label>批次：<input id="rec-batch" type="text" placeholder="精确批次"></label>
+            <button id="rec-search" class="btn primary">检索</button>
+            <button id="rec-export" class="btn">导出 CSV</button>
+            <span id="rec-status" class="status-line" style="margin:0;"></span>
+          </div>
+        </div>
+        <div class="card">
+          <div id="rec-list"></div>
+        </div>
+      </section>
+
+      <!-- ===== 数据与设置 ===== -->
+      <section class="view" id="view-settings">
+        <h2>数据与设置</h2>
+        <div class="md-grid">
+          <div class="card">
+            <h3>检测判定限值</h3>
+            <div class="form-row">
+              <label>下限（ng/mL）：<input id="st-lower" type="number" step="any" placeholder="留空 = 无下限"></label>
+              <label>上限（ng/mL）：<input id="st-upper" type="number" step="any" placeholder="留空 = 无上限"></label>
+            </div>
+            <div class="form-row">
+              <label>浓度单位：<input id="st-unit" type="text" placeholder="ng/mL"></label>
+              <label>默认批次：<input id="st-batch" type="text" placeholder="如 2026-09-16-01"></label>
+            </div>
+            <button id="st-save" class="btn primary">保存设置</button>
+            <span id="st-status" class="status-line" style="margin:0;"></span>
+          </div>
+          <div class="card">
+            <h3>参考图</h3>
+            <div id="st-refs"></div>
+          </div>
+          <div class="card">
+            <h3>ROI 模板</h3>
+            <div id="st-templates"></div>
+          </div>
+          <div class="card">
+            <h3>已保存模型</h3>
+            <div id="st-models"></div>
+          </div>
+          <div class="card" style="grid-column:1 / -1;">
+            <h3>本地数据与备份</h3>
+            <div class="form-row">
+              <label>数据目录：<b id="st-dir">-</b></label>
+              <button id="st-backup" class="btn primary">立即备份</button>
+              <button id="st-refresh" class="btn">刷新列表</button>
+            </div>
+            <div id="st-backups"></div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/canvas/roi.js"></script>
+<script src="/static/js/app.js"></script>
+<script src="/static/js/views/home.js"></script>
+<script src="/static/js/views/workflow.js"></script>
+<script src="/static/js/views/modeling.js"></script>
+<script src="/static/js/views/records.js"></script>
+<script src="/static/js/views/settings.js"></script>
+</body>
+</html>

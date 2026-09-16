@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>荧光浓度建模 APP · 页面结构与交互设计 v1</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:"Microsoft YaHei","PingFang SC",sans-serif; background:#f4f6f8; color:#26313c; line-height:1.6; }
+  .wrap { max-width:1180px; margin:0 auto; padding:24px 20px 60px; }
+  header.page { background:#1f2d3a; color:#fff; border-radius:14px; padding:26px 30px; margin-bottom:22px; }
+  header.page h1 { font-size:22px; font-weight:600; letter-spacing:.5px; }
+  header.page p { color:#b8c6d1; font-size:14px; margin-top:6px; }
+  .tag { display:inline-block; background:#0f9d8f; color:#fff; font-size:12px; border-radius:20px; padding:2px 12px; margin-left:8px; vertical-align:middle; }
+  h2.sec { font-size:17px; color:#1f2d3a; margin:30px 0 14px; padding-left:12px; border-left:4px solid #0f9d8f; }
+  h2.sec small { font-weight:400; color:#6b7a87; font-size:12.5px; margin-left:10px; }
+  .card { background:#fff; border-radius:12px; padding:20px 22px; box-shadow:0 1px 4px rgba(31,45,58,.08); margin-bottom:16px; }
+
+  /* 整体布局示意 */
+  .appshell { border:1px solid #dfe6ec; border-radius:10px; overflow:hidden; background:#fff; }
+  .shell-top { background:#eef3f6; padding:8px 14px; font-size:12.5px; color:#4a5a68; border-bottom:1px solid #dfe6ec; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .shell-top .st { background:#fff; border:1px solid #cfd8e0; border-radius:6px; padding:3px 12px; font-size:12px; color:#3c4c5a; }
+  .shell-top .st b { color:#0f9d8f; font-weight:600; }
+  .shell-body { display:flex; min-height:240px; }
+  .shell-nav { width:170px; background:#243442; color:#c7d3dc; padding:12px 0; flex-shrink:0; }
+  .shell-nav .ni { padding:8px 16px; font-size:13.5px; border-left:3px solid transparent; }
+  .shell-nav .ni.on { background:#2d404f; color:#fff; border-left-color:#0f9d8f; }
+  .shell-nav .ni.sub { padding-left:32px; font-size:12.5px; color:#8fa3b0; }
+  .shell-main { flex:1; background:#f8fafb; padding:16px 18px; }
+  .shell-main .cards { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+  .shell-main .mc { background:#fff; border:1px solid #dfe6ec; border-radius:8px; padding:10px 14px; flex:1; min-width:130px; font-size:12.5px; color:#55636f; }
+  .shell-main .mc b { display:block; font-size:15px; color:#1f2d3a; }
+  .shell-main .tableph { background:#fff; border:1px solid #dfe6ec; border-radius:8px; padding:10px 14px; font-size:12.5px; color:#7c8a96; }
+  @media (max-width:640px){ .shell-nav{ width:110px; } .shell-nav .ni{ padding:6px 10px; font-size:12px; } }
+
+  /* 信息架构 + 详情 */
+  .arch { display:flex; gap:18px; flex-wrap:wrap; }
+  .arch-nav { flex:1; min-width:260px; }
+  .arch-nav .an { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:11px 14px; margin-bottom:8px; background:#fff; border:1px solid #dfe6ec; border-radius:9px; cursor:pointer; font-size:14px; color:#26313c; transition:border-color .15s, background .15s; min-height:44px; }
+  .arch-nav .an:hover { border-color:#0f9d8f; }
+  .arch-nav .an.on { border-color:#0f9d8f; background:#e9f7f5; font-weight:600; }
+  .arch-nav .an .cnt { font-size:11.5px; color:#8a97a3; background:#eef2f5; border-radius:12px; padding:1px 9px; font-weight:400; }
+  .arch-nav .an .arrow { color:#b6c2cc; font-size:13px; }
+  .arch-detail { flex:1.35; min-width:320px; background:#fff; border:1px solid #dfe6ec; border-radius:12px; padding:18px 20px; min-height:360px; }
+  .arch-detail h3 { font-size:16px; color:#1f2d3a; margin-bottom:4px; }
+  .arch-detail .role { font-size:12px; color:#8a97a3; margin-bottom:14px; }
+  .arch-detail .lbl { font-size:12px; font-weight:600; color:#0f7d72; margin:12px 0 6px; letter-spacing:1px; }
+  .arch-detail ul { margin:0; padding-left:18px; }
+  .arch-detail li { font-size:13.5px; color:#3c4c5a; margin-bottom:5px; }
+  .arch-detail li b { color:#1f2d3a; }
+
+  /* 流水线图 */
+  .pipe { display:flex; gap:0; align-items:stretch; flex-wrap:wrap; }
+  .pstep { flex:1; min-width:150px; background:#fff; border:1px solid #dfe6ec; border-radius:10px; padding:14px; position:relative; margin-right:18px; }
+  .pstep:last-child { margin-right:0; }
+  .pstep::after { content:"→"; position:absolute; right:-15px; top:50%; transform:translateY(-50%); color:#b6c2cc; font-size:18px; }
+  .pstep:last-child::after { content:""; }
+  .pstep .num { width:24px; height:24px; border-radius:50%; background:#0f9d8f; color:#fff; font-size:13px; display:flex; align-items:center; justify-content:center; font-weight:600; margin-bottom:8px; }
+  .pstep h4 { font-size:14px; color:#1f2d3a; margin-bottom:6px; }
+  .pstep .auto { font-size:11.5px; color:#0f7d72; background:#e4f5f2; border-radius:12px; padding:1px 9px; display:inline-block; margin-bottom:8px; }
+  .pstep .adj { font-size:11.5px; color:#b26a00; background:#fdf1dd; border-radius:12px; padding:1px 9px; display:inline-block; margin-bottom:8px; margin-left:4px; }
+  .pstep ul { padding-left:16px; }
+  .pstep li { font-size:12.5px; color:#55636f; margin-bottom:3px; }
+  .pipe-legend { display:flex; gap:18px; margin-top:12px; font-size:12.5px; color:#55636f; flex-wrap:wrap; }
+  .pipe-legend i { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+  .lg-auto i { background:#e4f5f2; border:1px solid #0f9d8f; }
+  .lg-adj i { background:#fdf1dd; border:1px solid #e0961f; }
+
+  /* 两条核心流程 */
+  .flows { display:flex; gap:16px; flex-wrap:wrap; }
+  .flow { flex:1; min-width:300px; background:#fff; border:1px solid #dfe6ec; border-radius:12px; padding:18px 20px; }
+  .flow h4 { font-size:15px; margin-bottom:12px; color:#1f2d3a; }
+  .flow h4 span { font-size:11.5px; background:#eef2f5; border-radius:12px; padding:2px 10px; color:#6b7a87; margin-left:6px; font-weight:400; }
+  .fstep { display:flex; align-items:flex-start; gap:10px; margin-bottom:10px; }
+  .fstep .dot { width:22px; height:22px; border-radius:50%; background:#eef2f5; color:#4a5a68; font-size:12px; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:2px; }
+  .fstep.cal .dot { background:#0f9d8f; color:#fff; }
+  .fstep.det .dot { background:#1d6fb8; color:#fff; }
+  .fstep p { font-size:13.5px; color:#3c4c5a; }
+  .fstep p small { display:block; color:#8a97a3; font-size:12px; }
+
+  /* 交互原则 */
+  .principles { display:flex; gap:14px; flex-wrap:wrap; }
+  .pri { flex:1; min-width:210px; background:#fff; border:1px solid #dfe6ec; border-radius:10px; padding:14px 16px; }
+  .pri b { display:block; font-size:14px; color:#1f2d3a; margin-bottom:4px; }
+  .pri p { font-size:12.5px; color:#55636f; }
+  footer { margin-top:26px; font-size:12px; color:#8a97a3; text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="page">
+  <h1>荧光浓度建模 APP · 页面结构与交互设计 <span class="tag">v1 待确认</span></h1>
+  <p>本地单机应用（方案 B：本地小服务 + 文件夹存储）｜固定装置拍摄、一张图一条试纸｜荧光颜色随浓度变化（绿→红）｜上传后自动流水线 + 逐步手动干预</p>
+</header>
+
+<h2 class="sec">一、整体布局 <small>所有页面的统一骨架</small></h2>
+<div class="card">
+  <div class="appshell">
+    <div class="shell-top">
+      <span class="st">当前生效模型：<b>4PL</b>（R²=0.992）</span>
+      <span class="st">当前批次：<b>2026-09-16-01</b></span>
+      <span class="st">数据目录：<b>D:\FluroApp\data</b></span>
+      <span class="st">今日检测：<b>12</b> 条</span>
+    </div>
+    <div class="shell-body">
+      <div class="shell-nav">
+        <div class="ni on">首页总览</div>
+        <div class="ni">检测工作流</div>
+        <div class="ni sub">上传 · 预处理 · ROI · 特征 · 结果</div>
+        <div class="ni">标定建模</div>
+        <div class="ni">检测记录</div>
+        <div class="ni">数据与设置</div>
+      </div>
+      <div class="shell-main">
+        <div class="cards">
+          <div class="mc"><b>12.4 ± 1.1</b>最近浓度 C±U（ng/mL）</div>
+          <div class="mc"><b>0.992</b>标定模型 R²</div>
+          <div class="mc"><b>0.8</b>LOD（ng/mL）</div>
+          <div class="mc"><b>186</b>累计记录</div>
+        </div>
+        <div class="tableph">标定曲线缩略图（模型名 + 散点 + 拟合线 + 95% 预测带）</div>
+        <div class="tableph" style="margin-top:10px;">最近检测记录表（时间 / 批次 / 浓度 / 判定状态）</div>
+      </div>
+    </div>
+  </div>
+  <p style="font-size:12.5px;color:#8a97a3;margin-top:10px;">顶部为全局状态条（模型、批次、数据目录、当日统计）；左侧为固定导航；主区随页面切换。示意图：示例数值仅作布局演示。</p>
+</div>
+
+<h2 class="sec">二、信息架构与页面详情 <small>点击左侧页面查看该页布局与交互要点</small></h2>
+<div class="card arch">
+  <div class="arch-nav">
+    <div class="an on" data-p="overview">首页总览<span class="cnt">1 页</span><span class="arrow">›</span></div>
+    <div class="an" data-p="workflow">检测工作流<span class="cnt">5 步自动流水线</span><span class="arrow">›</span></div>
+    <div class="an" data-p="calibration">标定建模<span class="cnt">1 页</span><span class="arrow">›</span></div>
+    <div class="an" data-p="records">检测记录<span class="cnt">1 页</span><span class="arrow">›</span></div>
+    <div class="an" data-p="settings">数据与设置<span class="cnt">1 页</span><span class="arrow">›</span></div>
+  </div>
+  <div class="arch-detail" id="detail">
+    <h3 id="d-title">首页总览</h3>
+    <div class="role" id="d-role">默认落地页 · 一屏掌握系统状态</div>
+    <div class="lbl">页面布局</div>
+    <ul id="d-layout"></ul>
+    <div class="lbl">交互要点</div>
+    <ul id="d-inter"></ul>
+  </div>
+</div>
+
+<h2 class="sec">三、检测工作流：自动流水线与干预点 <small>上传后自动依次执行，每步可展开修正</small></h2>
+<div class="card">
+  <div class="pipe">
+    <div class="pstep"><div class="num">1</div><h4>上传</h4><div><span class="auto">自动识别</span></div><ul><li>拖拽/批量导入</li><li>缩略图墙</li><li>标记 标定/检测</li><li>录入批次、已知浓度</li></ul></div>
+    <div class="pstep"><div class="num">2</div><h4>预处理</h4><div><span class="auto">自动执行</span><span class="adj">可干预</span></div><ul><li>暗场/平场校正</li><li>去噪参数</li><li>前后效果对比</li><li>重跑本步</li></ul></div>
+    <div class="pstep"><div class="num">3</div><h4>ROI 分割</h4><div><span class="auto">自动套用</span><span class="adj">可干预</span></div><ul><li>模板自动对齐</li><li>手动拖动修正</li><li>选区叠加显示</li></ul></div>
+    <div class="pstep"><div class="num">4</div><h4>特征提取</h4><div><span class="auto">自动计算</span><span class="adj">可干预</span></div><ul><li>色相/通道比值等</li><li>异常值标记剔除</li><li>浓度趋势预览</li></ul></div>
+    <div class="pstep"><div class="num">5</div><h4>结果</h4><div><span class="auto">自动预测</span><span class="adj">可干预</span></div><ul><li>C±U 与超限判定</li><li>换模型/改限值重算</li><li>标定图→入数据集</li></ul></div>
+  </div>
+  <div class="pipe-legend">
+    <span class="lg-auto"><i></i>系统自动执行，无需操作</span>
+    <span class="lg-adj"><i></i>可展开手动调整，改后下游级联重算</span>
+  </div>
+</div>
+
+<h2 class="sec">四、两条核心使用流程 <small>标定（建立模型）与检测（使用模型）</small></h2>
+<div class="card flows">
+  <div class="flow">
+    <h4>标定流程<span>建立标准曲线</span></h4>
+    <div class="fstep cal"><div class="dot">1</div><p>导入标定图，逐张录入已知浓度<small>支持同一浓度多张重复图</small></p></div>
+    <div class="fstep cal"><div class="dot">2</div><p>自动流水线跑完预处理 → ROI → 特征<small>可对个别异常图手动修正</small></p></div>
+    <div class="fstep cal"><div class="dot">3</div><p>特征按浓度分组入库<small>显示每组均值 ± 标准差</small></p></div>
+    <div class="fstep cal"><div class="dot">4</div><p>建模页拟合多种模型，对比 R² / RMSE / LOD<small>线性、多项式、指数、4PL</small></p></div>
+    <div class="fstep cal"><div class="dot">5</div><p>选定并保存"生效模型"<small>首页显示模型与 R²，检测页自动调用</small></p></div>
+  </div>
+  <div class="flow">
+    <h4>检测流程<span>日常检测样本</span></h4>
+    <div class="fstep det"><div class="dot">1</div><p>导入检测图，录入批次号<small>可单张也可批量</small></p></div>
+    <div class="fstep det"><div class="dot">2</div><p>自动流水线全流程执行<small>默认参数 + 模板自动对齐</small></p></div>
+    <div class="fstep det"><div class="dot">3</div><p>输出每张 C±U 与是否超限判定<small>上下限来自设置页</small></p></div>
+    <div class="fstep det"><div class="dot">4</div><p>结果自动写入记录库<small>含原图、ROI、特征、参数快照、模型</small></p></div>
+    <div class="fstep det"><div class="dot">5</div><p>首页与记录页即时可见<small>可按时间 / 浓度 / 批次检索</small></p></div>
+  </div>
+</div>
+
+<h2 class="sec">五、交互设计原则 <small>贯穿所有模块</small></h2>
+<div class="card principles">
+  <div class="pri"><b>自动先行</b><p>上传后用默认参数直接跑通全流程，先给出结果，不需要用户操作。</p></div>
+  <div class="pri"><b>干预可回退</b><p>每一步都保留"自动结果"与"调整后结果"，可反复修改，不破坏原始图。</p></div>
+  <div class="pri"><b>级联更新</b><p>改动上游（预处理 / ROI），下游特征与结果自动重算，无需手动重跑。</p></div>
+  <div class="pri"><b>全程留痕</b><p>每次检测保存参数快照（预处理参数、ROI、模型、特征值），结果可追溯复现。</p></div>
+</div>
+
+<footer>荧光浓度建模 APP · 页面结构与交互设计 v1 · 数据示例均为布局演示，正式版以真实数据为准</footer>
+</div>
+
+<script>
+(function(){
+  var PAGES = {
+    overview: {
+      title:"首页总览", role:"默认落地页 · 一屏掌握系统状态",
+      layout:[
+        "顶部 4 张信息卡：<b>最近浓度 C±U</b>、<b>生效模型 R²</b>、<b>LOD</b>、<b>累计记录数</b>",
+        "标定曲线缩略图：模型名 + 散点 + 拟合线 + 95% 预测带",
+        "最近检测记录表：时间 / 批次 / 浓度 / 判定状态，最多显示 10 条",
+        "快捷操作区：上传新图、进入标定、查看全部记录"
+      ],
+      inter:[
+        "点击信息卡直达对应模块（浓度→检测、R²→标定、记录→记录页）",
+        "曲线图悬停显示数值，点击可进入标定建模页查看详情",
+        "有未处理的异常图时，首页出现提醒入口"
+      ]
+    },
+    workflow: {
+      title:"检测工作流", role:"核心页面 · 上传后自动执行 5 步，每步可展开调整",
+      layout:[
+        "顶部步骤条：<b>① 上传 → ② 预处理 → ③ ROI → ④ 特征 → ⑤ 结果</b>，当前步骤高亮，全部完成后可任意点回",
+        "主区为当前步骤面板：上传（批量导入 / 缩略图墙 / 标定·检测标记 / 批次与浓度录入）",
+        "预处理面板：暗场 / 平场参考图、滤波方式与强度、前后效果对比滑块",
+        "ROI 面板：首图框选存模板、自动套用对齐、单张拖动修正、选区叠加显示",
+        "特征面板：特征值表（平均 RGB / 主色相 / 饱和度 / 通道比值 / 强度 / 纹理熵）",
+        "结果面板：每张 C±U、超限判定、批量结果表；标定模式则显示\"加入标定数据集\"",
+        "底部流程状态：x/5 完成、异常图列表（ROI 失配等标黄，可单独处理）"
+      ],
+      inter:[
+        "上传后自动依次执行 5 步，进度条展示，可随时暂停",
+        "每步可展开手动调整，点\"重跑本步\"后下游自动级联重算",
+        "异常图单独标出，不影响整批正常结果",
+        "步骤间可来回跳转回看与修正"
+      ]
+    },
+    calibration: {
+      title:"标定建模", role:"建立并管理标准曲线 · 决定检测结果的准确性",
+      layout:[
+        "左栏：标定数据表——浓度分组、每组重复数、特征均值 ± 标准差",
+        "中栏：模型对比表——线性 / 多项式 / 指数 / 4PL 的 <b>R² / RMSE / LOD</b>，最优模型打推荐标记",
+        "右栏：标定曲线图——散点 + 拟合曲线 + 95% 预测带，坐标轴可缩放",
+        "操作区：剔除离群点、重新拟合、<b>保存为生效模型</b>"
+      ],
+      inter:[
+        "勾选剔除离群点后自动重拟合，对比指标即时更新",
+        "点击候选模型行，曲线图即时切换显示",
+        "确认后保存生效模型，检测流程与首页自动使用新模型",
+        "标定历史版本保留，可回退旧模型"
+      ]
+    },
+    records: {
+      title:"检测记录", role:"历史结果检索与追溯",
+      layout:[
+        "顶部筛选栏：时间范围 / 浓度范围 / 批次 / 判定状态",
+        "记录表：时间 / 批次 / 浓度 C±U / 所用模型 / 判定状态",
+        "点击行打开详情抽屉：原图 + ROI 叠加 + 特征值 + 参数快照 + 当时模型",
+        "导出按钮：当前筛选结果导出 CSV"
+      ],
+      inter:[
+        "筛选条件组合使用，结果即时刷新",
+        "详情抽屉可回看该次检测的完整链路，用于复核与追溯",
+        "支持批量删除与归档（需二次确认）"
+      ]
+    },
+    settings: {
+      title:"数据与设置", role:"数据安全与全局参数",
+      layout:[
+        "数据管理：图片库、数据存储位置、<b>一键备份 / 恢复</b>、CSV 导出",
+        "检测设置：判定上 / 下限、不确定度置信水平（默认 95% k=2）",
+        "模型管理：查看生效模型、删除、重新标定、历史版本切换",
+        "模板管理：ROI 模板（新建 / 重命名 / 删除）、暗场 / 平场参考图管理",
+        "批次管理：批次命名规则、历史批次列表"
+      ],
+      inter:[
+        "备份为一键打包下载，恢复从备份文件导入",
+        "修改判定限后，历史记录不重算（留痕），新检测按新限值判定",
+        "所有设置即时保存，重启后不丢失"
+      ]
+    }
+  };
+  var navs = document.querySelectorAll('.arch-nav .an');
+  var t = document.getElementById('d-title');
+  var r = document.getElementById('d-role');
+  var l = document.getElementById('d-layout');
+  var i = document.getElementById('d-inter');
+  function render(key){
+    var p = PAGES[key] || PAGES.overview;
+    t.textContent = p.title;
+    r.textContent = p.role;
+    l.innerHTML = '';
+    i.innerHTML = '';
+    p.layout.forEach(function(x){ var li=document.createElement('li'); li.innerHTML=x; l.appendChild(li); });
+    p.inter.forEach(function(x){ var li=document.createElement('li'); li.innerHTML=x; i.appendChild(li); });
+    navs.forEach(function(n){ n.classList.toggle('on', n.getAttribute('data-p')===key); });
+  }
+  navs.forEach(function(n){
+    n.addEventListener('click', function(){ render(n.getAttribute('data-p')); });
+  });
+  render('overview');
+})();
+</script>
+</body>
+</html>

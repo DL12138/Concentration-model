@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>荧光浓度建模 APP · 开发计划速览</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:"Microsoft YaHei","PingFang SC",sans-serif; background:#f4f6f8; color:#26313c; line-height:1.6; }
+  .wrap { max-width:1180px; margin:0 auto; padding:24px 20px 60px; }
+  header.page { background:#1f2d3a; color:#fff; border-radius:14px; padding:24px 30px; margin-bottom:22px; }
+  header.page h1 { font-size:21px; font-weight:600; }
+  header.page p { color:#b8c6d1; font-size:13.5px; margin-top:6px; }
+  .tag { display:inline-block; background:#0f9d8f; color:#fff; font-size:12px; border-radius:20px; padding:2px 12px; margin-left:8px; vertical-align:middle; }
+  h2.sec { font-size:16px; color:#1f2d3a; margin:28px 0 12px; padding-left:12px; border-left:4px solid #0f9d8f; }
+  h2.sec small { font-weight:400; color:#6b7a87; font-size:12px; margin-left:10px; }
+  .card { background:#fff; border-radius:12px; padding:18px 20px; box-shadow:0 1px 4px rgba(31,45,58,.08); margin-bottom:16px; }
+
+  /* 架构分层 */
+  .arch { display:flex; flex-direction:column; gap:0; }
+  .alayer { display:flex; align-items:stretch; border:1px solid #dfe6ec; border-radius:10px; overflow:hidden; margin-bottom:10px; }
+  .alayer .al-name { width:150px; background:#eef3f6; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-weight:600; font-size:13.5px; color:#1f2d3a; padding:10px; }
+  .alayer .al-body { flex:1; padding:10px 14px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .chip { background:#f8fafb; border:1px solid #dfe6ec; border-radius:7px; padding:5px 10px; font-size:12px; color:#3c4c5a; }
+  .chip b { color:#0f7d72; }
+  .alayer.web .al-name { background:#e4f5f2; color:#0f7d72; }
+  .alayer.svc .al-name { background:#e8f0f7; color:#1d6fb8; }
+  .alayer.dat .al-name { background:#f7f0e2; color:#8a5a00; }
+  .arrow-down { text-align:center; color:#b6c2cc; font-size:14px; margin:-4px 0; }
+
+  /* 里程碑 */
+  .milestones { display:flex; gap:8px; flex-wrap:wrap; }
+  .ms { flex:1; min-width:96px; background:#fff; border:1px solid #dfe6ec; border-radius:10px; padding:10px 8px; cursor:pointer; text-align:center; min-height:78px; transition:border-color .15s, background .15s; }
+  .ms:hover { border-color:#0f9d8f; }
+  .ms.on { border-color:#0f9d8f; background:#e9f7f5; }
+  .ms .mnum { font-size:12px; color:#0f7d72; font-weight:600; }
+  .ms .mtitle { font-size:13px; color:#1f2d3a; font-weight:600; margin:4px 0 2px; }
+  .ms .msize { font-size:11px; color:#8a97a3; }
+  .ms.done .mnum { color:#8a97a3; }
+  .detail { background:#fff; border:1px solid #dfe6ec; border-radius:12px; padding:16px 20px; margin-top:12px; min-height:150px; }
+  .detail h3 { font-size:15px; color:#1f2d3a; margin-bottom:2px; }
+  .detail .meta { font-size:12px; color:#8a97a3; margin-bottom:10px; }
+  .detail .lbl { font-size:12px; font-weight:600; color:#0f7d72; margin:8px 0 4px; }
+  .detail ul { padding-left:18px; }
+  .detail li { font-size:13px; color:#3c4c5a; margin-bottom:3px; }
+
+  .dep { font-size:12.5px; color:#55636f; background:#f8fafb; border:1px solid #dfe6ec; border-radius:8px; padding:10px 14px; margin-top:10px; }
+  .dep code { background:#eef2f5; border-radius:4px; padding:1px 6px; font-size:12px; color:#1d6fb8; }
+
+  footer { margin-top:24px; font-size:12px; color:#8a97a3; text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="page">
+  <h1>荧光浓度建模 APP · 开发计划速览 <span class="tag">依据 PRD v1.1</span></h1>
+  <p>技术架构 + M0~M9 里程碑执行计划（点击里程碑查看任务、产物与验收）｜ 详细内容见 DEVELOPMENT_PLAN.md</p>
+</header>
+
+<h2 class="sec">一、技术架构 <small>方案 B：本地小服务 + 文件夹存储，全程离线</small></h2>
+<div class="card arch">
+  <div class="alayer web">
+    <div class="al-name">浏览器（前端）</div>
+    <div class="al-body">
+      <span class="chip">单页 HTML/CSS/JS（无框架、无 CDN）</span>
+      <span class="chip">5 页面：<b>首页 / 工作流 / 建模 / 记录 / 设置</b></span>
+      <span class="chip">Canvas 交互：ROI 框选 / 前后对比滑块</span>
+    </div>
+  </div>
+  <div class="arrow-down">▼ HTTP（仅 127.0.0.1）</div>
+  <div class="alayer svc">
+    <div class="al-name">本地小服务（Python）</div>
+    <div class="al-body">
+      <span class="chip">Flask API（/api/*）</span>
+      <span class="chip">流水线编排（5 步自动 + 级联重算）</span>
+      <span class="chip">OpenCV + numpy：预处理 / ROI / 颜色特征</span>
+      <span class="chip">scipy：4PL 等拟合、R² / RMSE / LOD、不确定度 U</span>
+    </div>
+  </div>
+  <div class="arrow-down">▼ 读写</div>
+  <div class="alayer dat">
+    <div class="al-name">data\ 数据目录</div>
+    <div class="al-body">
+      <span class="chip">SQLite（记录 / 模型 / 设置 / 模板 / 快照）</span>
+      <span class="chip">images\ 原图</span>
+      <span class="chip">thumbnails\ 缩略图</span>
+      <span class="chip">processed\ 处理图</span>
+      <span class="chip">backups\ 备份 zip</span>
+    </div>
+  </div>
+</div>
+
+<h2 class="sec">二、里程碑 M0~M9 <small>点击查看每个阶段的执行内容</small></h2>
+<div class="card">
+  <div class="milestones" id="msbar"></div>
+  <div class="detail" id="detail">
+    <h3 id="d-title"></h3>
+    <div class="meta" id="d-meta"></div>
+    <div class="lbl">本阶段任务</div>
+    <ul id="d-tasks"></ul>
+    <div class="lbl">关键产物</div>
+    <ul id="d-deliver"></ul>
+    <div class="lbl">验收（映射 PRD）</div>
+    <ul id="d-accept"></ul>
+  </div>
+  <div class="dep">
+    依赖顺序：<code>M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9</code>；
+    M2 / M3 可并行；M4 依赖 M2+M3，M5 依赖 M3，M6 依赖 M5，M7 依赖 M4~M6；M9 必须用真实试纸图做最终验收。
+  </div>
+</div>
+
+<h2 class="sec">三、交付物（M9 核对）</h2>
+<div class="card" style="font-size:13px;color:#3c4c5a;">
+  fluro_app 完整应用（start.bat / server.py / app\ / static\）· requirements.txt · README.md · tools\make_test_images.py（合成测试图）· data 初始结构 · A~G 实测验收记录 · 必要时回写 PRD 并升版
+</div>
+
+<footer>荧光浓度建模 APP · 开发计划速览 · 对应 DEVELOPMENT_PLAN.md</footer>
+</div>
+
+<script>
+(function(){
+  var MS = [
+    {id:"M0", title:"环境与骨架", size:"S ≤1天", tasks:["检查本机 Python 3.10+，缺失则安装（Add to PATH）","创建 fluro_app 目录结构与 requirements.txt（flask/opencv/numpy/scipy）","安装依赖并验证 import 成功","start.bat：启动服务 + 浏览器自动打开，端口占用自动换","server.py 返回最小可访问页面"], deliver:["start.bat","requirements.txt","server.py 骨架"], accept:["双击 start.bat 浏览器自动打开页面","重复启动不冲突"]},
+    {id:"M1", title:"数据层与基础页面", size:"M 1~2天", tasks:["config.py：数据目录/端口/默认参数","database.py：SQLite 全部建表 + 通用 CRUD + 迁移策略","批量上传接口：原图入库 + 缩略图 + images 表","index.html + app.js：5 导航、顶部状态条、fetch 封装","tools/make_test_images.py：合成'颜色随浓度变化'测试图"], deliver:["config.py / database.py","上传与缩略图接口","单页骨架 / 合成图生成器"], accept:["批量上传 ≥10 张缩略图正确（PRD B1）","5 个导航可切换"]},
+    {id:"M2", title:"预处理模块", size:"M 1~2天", tasks:["image_processing.py：暗场校正 / 平场校正 / 高斯·中值去噪","/preprocess 接口：参数（参考图开关、滤波方式、kernel）","工作流'预处理'步骤 UI：参数控件 + 前后对比滑块 + 重跑本步","参数写入 pipeline_steps 快照"], deliver:["image_processing.py","/preprocess 接口","预处理步骤 UI"], accept:["调参重跑后输出变化（PRD C1 前半）","前后对比滑块可对照（C4）"]},
+    {id:"M3", title:"ROI 与特征提取", size:"M 1~2天", tasks:["ROI 模板 CRUD（归一化坐标）","自动套用：模板映射 + cv2.matchTemplate 微调","canvas/roi.js：框选 / 拖动 / 缩放 / 保存修正","特征接口：平均 RGB / 色相 / 饱和度 / 通道比值 / 强度 / 纹理熵","ROI 修正 → 特征级联重算"], deliver:["ROI 模板与自动套用","canvas/roi.js 交互","特征表 UI"], accept:["模板保存并自动套用（PRD C2）","手动修正后特征更新（C3、D1）"]},
+    {id:"M4", title:"自动流水线编排", size:"L 2~4天", tasks:["pipeline.py：5 步编排，单图/批量、进度、失败图标 attention","上传后自动触发流水线","工作流页完整 UI：步骤条、展开面板、异常列表、级联重算","结果步骤：检测出 C±U（占位模型）/ 标定提示入数据集"], deliver:["pipeline.py","工作流 5 步页面","异常图处理"], accept:["上传后自动完成 5 步无需操作（PRD B3）","改上游下游级联更新（C1）"]},
+    {id:"M5", title:"标定建模", size:"L 2~4天", tasks:["modeling.py：线性/多项式/指数/4PL 拟合 + R²/RMSE/LOD + 多初值防不收敛 + 预测反解","标定数据：浓度分组、数据点纳入/剔除、每组均值±SD","建模页三栏 UI：数据表 / 模型对比 / 曲线（自绘 SVG）","模型库：保存 / 激活 / 删除 / 历史版本"], deliver:["modeling.py","建模页三栏","模型库与生效模型"], accept:["完整标定流程跑通（PRD D2~D5）","4 类模型指标与曲线一致（D3）"]},
+    {id:"M6", title:"检测与判定", size:"M 1~2天", tasks:["预测管线：特征 → 生效模型反解 → 95% 预测区间 U（k=2）","超限判定（上下限来自 settings）","结果页 C±U + 状态徽标；换模型/改限值重算并更新快照","单张与批量检测列表"], deliver:["C±U 预测管线","超限判定与结果页"], accept:["新图输出 C±U（PRD E1）","超限判定正确（E2）","换模型结果变化（E3）"]},
+    {id:"M7", title:"首页与检测记录", size:"M 1~2天", tasks:["/api/home/summary：最近 C±U / R² / LOD / 记录数 / 异常提醒","首页 UI：4 信息卡 + 曲线缩略图 + 最近 10 条 + 快捷操作","记录页：组合筛选 + 详情抽屉（原图/ROI/特征/快照/模型）+ CSV 导出","信息卡跳转联动"], deliver:["首页聚合接口与 UI","记录检索与详情","CSV 导出"], accept:["首页数据与实际一致（PRD G1/G2）","筛选命中、详情可回看（F1~F3）"]},
+    {id:"M8", title:"设置与备份恢复", size:"M 1~2天", tasks:["设置页：判定限 / 置信水平 / 单位 / 数据目录 / 模型·模板·参考图·批次管理","backup.py：一键备份（zip + manifest.json 校验）","恢复：上传备份 → 解包校验 → 替换/合并"], deliver:["设置页","backup.py 备份/恢复"], accept:["备份→清空→恢复往返一致（PRD A2/A3）","重启后数据完整（A1）"]},
+    {id:"M9", title:"打磨与交付验收", size:"L 2~4天", tasks:["性能：单张 ≤5s、10 张批量 ≤60s（真实图验证）","断网验证（A4）；P0/P1 清零；边界处理（坏图/重复上传/端口占用）","按 PRD A~G 逐项实测并记录结果表","README.md：启动 / 数据目录 / 备份恢复 / 已知限制","完成定义 10 条核对"], deliver:["完整应用","README.md","A~G 验收记录"], accept:["完成定义第 11 节 10 条全部满足"]}
+  ];
+  var bar = document.getElementById('msbar');
+  var t = document.getElementById('d-title');
+  var meta = document.getElementById('d-meta');
+  var tasks = document.getElementById('d-tasks');
+  var deliv = document.getElementById('d-deliver');
+  var acc = document.getElementById('d-accept');
+  var items = [];
+  MS.forEach(function(m){
+    var d = document.createElement('div');
+    d.className = 'ms';
+    d.setAttribute('data-id', m.id);
+    d.innerHTML = '<div class="mnum">' + m.id + '</div><div class="mtitle">' + m.title + '</div><div class="msize">' + m.size + '</div>';
+    d.addEventListener('click', function(){ render(m.id); });
+    bar.appendChild(d);
+    items.push(d);
+  });
+  function fill(list, el){
+    el.innerHTML = '';
+    list.forEach(function(x){ var li = document.createElement('li'); li.textContent = x; el.appendChild(li); });
+  }
+  function render(id){
+    var m = MS.filter(function(x){ return x.id === id; })[0] || MS[0];
+    t.textContent = m.id + ' · ' + m.title;
+    meta.textContent = '工作量：' + m.size + '｜ 详细执行条目见 DEVELOPMENT_PLAN.md 第 5 节';
+    fill(m.tasks, tasks);
+    fill(m.deliver, deliv);
+    fill(m.accept, acc);
+    items.forEach(function(n){ n.classList.toggle('on', n.getAttribute('data-id') === id); });
+  }
+  render('M0');
+})();
+</script>
+</body>
+</html>
