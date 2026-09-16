@@ -187,6 +187,21 @@
               </tr>
             </tbody>
           </table>
+          <div class="card" style="margin-top:14px;">
+            <h3>通道分离 RGB 值（全图）与 ROI 平均 RGB 对照</h3>
+            <div id="feat-ch" class="hint">加载中...</div>
+          </div>
+          <div class="card" style="margin-top:14px;">
+            <h3>特征算法说明</h3>
+            <ul class="algo-list">
+              <li><b>平均 R/G/B</b>：ROI 区域内全部像素各通道的算术平均值（勾选「背景扣除」时减去 ROI 外环背景均值）。</li>
+              <li><b>色相 / 饱和度 / 明度</b>：ROI 像素转 HSV 色彩空间；色相采用<b>圆形均值</b>，避免红色端 0/180 环绕导致均值失真。</li>
+              <li><b>G/R、B/G</b>：平均绿/红通道比、平均蓝/绿通道比，用于描述通道间相对强度。</li>
+              <li><b>强度</b>：HSV 明度（V）通道均值，反映荧光亮度。</li>
+              <li><b>纹理熵</b>：ROI 灰度直方图归一化后的信息熵，数值越大纹理越复杂。</li>
+              <li><b>平均 ROI 图片</b>：上方「ROI 平均色」为 ROI 区域平均 RGB 生成的纯色块；「ROI 区域」为裁剪后的原样图。</li>
+            </ul>
+          </div>
         </div>
         <!-- 步骤 6：结果 -->
         <div class="wf-panel" id="wf-panel-6" style="display:none;">

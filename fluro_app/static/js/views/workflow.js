@@ -417,6 +417,22 @@
       ov.closest('div').style.display = '';
       const vals = [f.mean_r, f.mean_g, f.mean_b, f.hue, f.saturation, f.value, f.ratio_gr, f.ratio_bg, f.intensity, f.texture_entropy];
       cells.forEach(function (c, i) { c.textContent = vals[i]; });
+      // 通道分离 RGB 值（全图）与 ROI 平均 RGB 对照
+      const chEl = document.getElementById('feat-ch');
+      try {
+        const ch = (await global.API.get('/api/pipeline/' + currentImageId + '/channels')).channels;
+        if (ch && ch.mean_r != null) {
+          chEl.innerHTML = '<table class="feat-table"><thead><tr><th></th><th>R</th><th>G</th><th>B</th></tr></thead><tbody>'
+            + '<tr><td>通道分离（全图）</td><td>' + ch.mean_r + '</td><td>' + ch.mean_g + '</td><td>' + ch.mean_b + '</td></tr>'
+            + '<tr><td>ROI 平均</td><td>' + f.mean_r + '</td><td>' + f.mean_g + '</td><td>' + f.mean_b + '</td></tr>'
+            + '</tbody></table>'
+            + '<div class="hint">ROI 平均取自检测区；全图通道均值供整体颜色观察参考。</div>';
+        } else {
+          chEl.textContent = '尚无通道分离数据：可在「通道分离」步骤点击「重新分离通道」。';
+        }
+      } catch (e2) {
+        chEl.textContent = '通道数据读取失败：' + e2.message;
+      }
       document.getElementById('feat-status').textContent = '特征已就绪（基于处理后图像）';
       document.getElementById('feat-status').className = 'status-line';
     } catch (e) {

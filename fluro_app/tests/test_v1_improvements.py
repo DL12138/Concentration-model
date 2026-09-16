@@ -266,3 +266,37 @@ def test_p5_delete_cleans_channel_files(client):
     assert (cdir / f'{iid}_r.png').exists()
     client.delete(f'/api/images/{iid}')
     assert not (cdir / f'{iid}_r.png').exists()
+
+
+# ============ 问题 6：特征提取界面展示算法 / 平均 ROI 图 / 通道 RGB 值 ============
+
+def test_p6_channel_means_match_processed(client):
+    """通道分离的 RGB 值（特征界面展示）必须与处理后图像逐像素计算一致。"""
+    iid = _upload(client, conc=50)
+    _pipeline(client, [iid])
+    processed = _decode(client.get(f'/api/images/{iid}/processed'))
+    expected = processed.reshape(-1, 3).mean(axis=0)  # R,G,B
+    ch = client.get(f'/api/pipeline/{iid}/channels').get_json()['channels']
+    assert abs(ch['mean_r'] - expected[0]) <= 0.5
+    assert abs(ch['mean_g'] - expected[1]) <= 0.5
+    assert abs(ch['mean_b'] - expected[2]) <= 0.5
+
+
+def test_p6_roi_avg_matches_feature_means(client):
+    """平均 ROI 图（ROI 平均色块）的像素值应等于特征表 mean_r/g/b（问题1 已验，此处回归确认展示链路）。"""
+    iid = _upload(client, conc=50)
+    _pipeline(client, [iid])
+    avg = _decode(client.get(f'/api/images/{iid}/roi_avg'))
+    feats = client.get(f'/api/pipeline/{iid}/features').get_json()['features']
+    for i, key in enumerate(('mean_r', 'mean_g', 'mean_b')):
+        assert abs(int(avg[0, 0, i]) - float(feats[key])) <= 6
+
+
+def test_p6_features_available_after_roi(client):
+    """特征表（含平均 RGB 与派生指标）在 ROI 就绪后即可读取，供前端展示。"""
+    iid = _upload(client, conc=80)
+    _pipeline(client, [iid])
+    f = client.get(f'/api/pipeline/{iid}/features').get_json()['features']
+    for key in ('mean_r', 'mean_g', 'mean_b', 'hue', 'saturation', 'value', 'ratio_gr', 'ratio_bg', 'intensity', 'texture_entropy'):
+        assert f[key] is not None, f'{key} 缺失'
+    assert f['ratio_gr'] > 0 and f['texture_entropy'] >= 0
