@@ -392,9 +392,16 @@ def image_info(image_id):
 @bp.route('/images/<int:image_id>', methods=['DELETE'])
 def delete_image(image_id):
     """删除一张图：清理相关表（特征/ROI/流水线步骤/检测记录/标定点）与磁盘文件。"""
+    if not _delete_image(image_id):
+        abort(404)
+    return jsonify({'ok': True})
+
+
+def _delete_image(image_id):
+    """删除单张图及其关联记录与文件；图不存在返回 False。"""
     row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
     if not row:
-        abort(404)
+        return False
     for tbl in ('features', 'roi_features', 'roi', 'rois', 'pipeline_steps', 'detections', 'calibration_points'):
         db.execute(_db_path(), f'DELETE FROM {tbl} WHERE image_id=?', (image_id,))
     db.execute(_db_path(), 'DELETE FROM images WHERE id=?', (image_id,))
@@ -405,7 +412,32 @@ def delete_image(image_id):
     cdir = _data_dir() / 'processed' / 'channels'
     for ch in 'rgb':
         (cdir / f'{image_id}_{ch}.png').unlink(missing_ok=True)
-    return jsonify({'ok': True})
+    return True
+
+
+@bp.route('/images/batch_delete', methods=['POST'])
+def batch_delete_images():
+    """批量删除图片（第六批）：body {ids: [...]}；返回删除与跳过的数量。"""
+    body = request.get_json(silent=True) or {}
+    ids = body.get('ids') or []
+    if not isinstance(ids, list) or not ids:
+        return jsonify({'error': '未提供待删除的图片 ID'}), 400
+    int_ids = []
+    for v in ids:
+        try:
+            int_ids.append(int(v))
+        except (TypeError, ValueError):
+            continue
+    if not int_ids:
+        return jsonify({'error': '图片 ID 必须为数字'}), 400
+    deleted = 0
+    skipped = 0
+    for iid in dict.fromkeys(int_ids):
+        if _delete_image(iid):
+            deleted += 1
+        else:
+            skipped += 1
+    return jsonify({'ok': True, 'deleted': deleted, 'skipped': skipped})
 
 
 @bp.route('/images', methods=['GET'])

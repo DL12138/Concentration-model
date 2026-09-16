@@ -21,6 +21,13 @@
       const div = document.createElement('div');
       div.className = 'gitem' + (im.id === currentImageId ? ' selected' : '');
       div.dataset.id = im.id;
+      // 批量选择复选框
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.className = 'gchk';
+      chk.title = '勾选以批量删除';
+      chk.addEventListener('click', function (ev) { ev.stopPropagation(); });
+      chk.addEventListener('change', updateBatchBar);
       const del = document.createElement('button');
       del.className = 'gdel';
       del.title = '删除该图及其记录';
@@ -58,12 +65,71 @@
       else if (im.batch) nameParts.push('批次 ' + im.batch);
       info.textContent = nameParts.join(' · ');
       meta.appendChild(info);
+      div.appendChild(chk);
       div.appendChild(del);
       div.appendChild(img);
       div.appendChild(meta);
       div.addEventListener('click', function () { selectImage(im.id); });
       g.appendChild(div);
     });
+    syncBatchBar(images);
+  }
+
+  // ---- 批量删除（第六批） ----
+  function selectedIds() {
+    const ids = [];
+    document.querySelectorAll('#up-gallery .gitem .gchk:checked').forEach(function (c) {
+      ids.push(parseInt(c.closest('.gitem').dataset.id, 10));
+    });
+    return ids;
+  }
+
+  function updateBatchBar() {
+    const ids = selectedIds();
+    const count = document.getElementById('up-sel-count');
+    const btn = document.getElementById('up-batch-del');
+    if (count) count.textContent = '已选 ' + ids.length + ' 张';
+    if (btn) btn.disabled = ids.length === 0;
+    const all = document.getElementById('up-sel-all');
+    if (all) {
+      const boxes = document.querySelectorAll('#up-gallery .gchk');
+      all.checked = boxes.length > 0 && ids.length === boxes.length;
+      all.indeterminate = ids.length > 0 && ids.length < boxes.length;
+    }
+  }
+
+  function syncBatchBar() {
+    const all = document.getElementById('up-sel-all');
+    if (all) { all.checked = false; all.indeterminate = false; }
+    updateBatchBar();
+  }
+
+  function bindBatchBar() {
+    const all = document.getElementById('up-sel-all');
+    if (all) {
+      all.addEventListener('change', function () {
+        document.querySelectorAll('#up-gallery .gchk').forEach(function (c) { c.checked = all.checked; });
+        updateBatchBar();
+      });
+    }
+    const btn = document.getElementById('up-batch-del');
+    if (btn) {
+      btn.addEventListener('click', async function () {
+        const ids = selectedIds();
+        if (!ids.length) return;
+        if (!confirm('删除选中的 ' + ids.length + ' 张图及其全部记录与文件？')) return;
+        try {
+          const res = await global.API.post('/api/images/batch_delete', { ids: ids });
+          if (ids.indexOf(currentImageId) !== -1) currentImageId = null;
+          await refreshGallery();
+          if (global.FluroApp) global.FluroApp.refreshTopbar();
+          const status = document.getElementById('up-status');
+          status.textContent = '批量删除完成：' + res.deleted + ' 张' + (res.skipped ? '，跳过 ' + res.skipped + ' 张（不存在）' : '');
+        } catch (e) {
+          alert('批量删除失败：' + e.message);
+        }
+      });
+    }
   }
 
   async function refreshGallery() {
@@ -854,6 +920,8 @@
         showWfPanel(n);
       });
     });
+
+    bindBatchBar();
   }
 
   global.FluroWorkflow = {
