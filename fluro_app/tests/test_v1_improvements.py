@@ -352,3 +352,81 @@ def test_p7a_no_result_before_detect(client):
     _pipeline(client, [iid])
     rows = client.get('/api/detections').get_json()['detections']
     assert not any(x['image_id'] == iid for x in rows)
+
+
+# ============ 问题 7b：浓度标定界面（写浓度 → 拟合建模） ============
+
+def test_p7b_quick_calibrate_adds_point(client):
+    iid = _upload(client, conc=20, kind='calibration')
+    _pipeline(client, [iid])
+    r = client.post('/api/calibration/quick', json={'image_id': iid, 'conc': 20})
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d['ok'] and d['group_id'] and d['point_id'] and d['reused'] is False
+    data = client.get('/api/calibration/data').get_json()
+    assert any(g['conc'] == 20 for g in data['groups'])
+
+
+def test_p7b_quick_reuses_same_conc_group(client):
+    ids = []
+    for c in (30, 30):
+        iid = _upload(client, conc=c, kind='calibration')
+        _pipeline(client, [iid])
+        ids.append(iid)
+    g1 = client.post('/api/calibration/quick', json={'image_id': ids[0], 'conc': 30}).get_json()
+    g2 = client.post('/api/calibration/quick', json={'image_id': ids[1], 'conc': 30}).get_json()
+    assert g1['group_id'] == g2['group_id'], '同浓度应复用同一分组'
+
+
+def test_p7b_quick_repeat_updates_not_duplicates(client):
+    iid = _upload(client, conc=40, kind='calibration')
+    _pipeline(client, [iid])
+    r1 = client.post('/api/calibration/quick', json={'image_id': iid, 'conc': 40}).get_json()
+    r2 = client.post('/api/calibration/quick', json={'image_id': iid, 'conc': 40}).get_json()
+    assert r2['reused'] is True and r1['point_id'] == r2['point_id']
+    data = client.get('/api/calibration/data').get_json()
+    n = sum(len(g['points']) for g in data['groups'])
+    assert n == 1
+
+
+def test_p7b_quick_rejects_detection_image(client):
+    iid = _upload(client, conc=50, kind='detection')
+    _pipeline(client, [iid])
+    r = client.post('/api/calibration/quick', json={'image_id': iid, 'conc': 50})
+    assert r.status_code == 400
+    assert '标定图' in r.get_json()['error']
+
+
+def test_p7b_quick_requires_features(client):
+    """标定图未完成流水线（无特征）时拒绝加入。"""
+    img = mti.make_test_image(60)
+    ok, buf = cv2.imencode('.png', img[:, :, ::-1])
+    data = {'files': [(io.BytesIO(buf.tobytes()), 't.png')], 'kind': 'calibration', 'known_conc': '60'}
+    iid2 = client.post('/api/images/upload', data=data, content_type='multipart/form-data').get_json()['images'][0]['id']
+    r = client.post('/api/calibration/quick', json={'image_id': iid2, 'conc': 60})
+    assert r.status_code == 400
+    assert '特征' in r.get_json()['error']
+
+
+def test_p7b_full_calibration_chain_from_result(client):
+    """端到端：标定图结果 → 写浓度加入 → 拟合 → 保存生效模型 → 检测图出结果。"""
+    cal_ids = []
+    for c in (10, 50, 100):
+        iid = _upload(client, conc=c, kind='calibration')
+        _pipeline(client, [iid])
+        cal_ids.append(iid)
+    for iid, c in zip(cal_ids, (10, 50, 100)):
+        r = client.post('/api/calibration/quick', json={'image_id': iid, 'conc': c})
+        assert r.status_code == 200
+    fit = client.post('/api/calibration/fit', json={'feature': 'hue'}).get_json()
+    best = fit['results'][fit['best']]
+    m = client.post('/api/models', json={
+        'name': 'M', 'type': fit['best'], 'params': best['params'],
+        'metrics': {'r2': best['r2'], 'rmse': best['rmse'], 'lod': best.get('lod')},
+        'source_snapshot': {'feature': 'hue', 'data': fit['data'], 'n': fit['n']},
+    }).get_json()
+    assert m['ok']
+    det_id = _upload(client, conc=50, kind='detection')
+    _pipeline(client, [det_id])
+    det = client.post(f'/api/detect/{det_id}', json={}).get_json()['detection']
+    assert det['conc'] is not None and det['id']

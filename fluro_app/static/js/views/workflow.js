@@ -144,8 +144,16 @@
         if (detImg.closest('div')) detImg.closest('div').style.display = '';
       }
       if (im && im.kind === 'calibration') {
-        zone.innerHTML = '<div class="card hint">这是标定图（已知浓度 ' + im.known_conc + '）。'
-          + '请到「标定建模」页把它加入浓度分组，完成标定后可对检测图出结果。</div>';
+        zone.innerHTML = '<div class="card">'
+          + '<h3>标定数据录入（写浓度 → 建模型）</h3>'
+          + '<p class="hint">把这张标定图写入已知浓度并加入标定数据集；再到「标定建模」页拟合并保存生效模型。</p>'
+          + '<div class="form-row">'
+          + '<label>浓度（ng/mL）：<input id="cal-conc" type="number" step="any" value="' + (im.known_conc != null ? im.known_conc : '') + '"></label>'
+          + '<button id="cal-add" class="btn primary">加入标定数据集</button>'
+          + '<span id="cal-msg" class="status-line" style="margin:0;"></span>'
+          + '</div><div id="cal-state"></div></div>';
+        document.getElementById('cal-add').addEventListener('click', quickCalibrate);
+        loadCalState(currentImageId);
         return;
       }
       // 已检测过则展示历史
@@ -163,6 +171,45 @@
         if (btn) btn.addEventListener('click', runDetect);
       }
     } catch (e) { /* 忽略 */ }
+  }
+
+  async function quickCalibrate() {
+    const concInput = document.getElementById('cal-conc');
+    if (!concInput || !currentImageId) return;
+    const conc = concInput.value;
+    const msg = document.getElementById('cal-msg');
+    if (!conc || isNaN(parseFloat(conc))) {
+      msg.textContent = '请输入有效浓度';
+      msg.className = 'status-line err';
+      return;
+    }
+    msg.textContent = '加入中...';
+    try {
+      const res = await global.API.post('/api/calibration/quick', { image_id: currentImageId, conc: parseFloat(conc) });
+      msg.textContent = '已加入浓度 ' + res.conc + (res.reused ? '（更新已有数据点）' : '') + '，请到「标定建模」页拟合并保存模型';
+      msg.className = 'status-line';
+      loadCalState(currentImageId);
+    } catch (e) {
+      msg.textContent = '加入失败：' + e.message;
+      msg.className = 'status-line err';
+    }
+  }
+
+  async function loadCalState(imageId) {
+    const el = document.getElementById('cal-state');
+    if (!el) return;
+    try {
+      const data = await global.API.get('/api/calibration/data');
+      const joined = [];
+      (data.groups || []).forEach(function (g) {
+        (g.points || []).forEach(function (p) {
+          if (p.image_id === imageId) joined.push(g.conc);
+        });
+      });
+      el.innerHTML = joined.length
+        ? '<div class="hint">该图已加入浓度分组：' + joined.join('、') + '。可在「标定建模」页拟合并保存生效模型。</div>'
+        : '<div class="hint">尚未加入分组：填写浓度后点击「加入标定数据集」。</div>';
+    } catch (e) { el.innerHTML = ''; }
   }
 
   async function runDetect() {

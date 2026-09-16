@@ -145,6 +145,47 @@ def add_point():
     return jsonify({'ok': True, 'id': pid, 'reused': False})
 
 
+@bp.route('/calibration/quick', methods=['POST'])
+def quick_calibrate():
+    """一键标定：把一张已保存结果的标定图，按给定浓度加入（或复用）浓度分组。
+
+    供「结果界面 → 写浓度 → 加入标定数据集」链路使用。返回 group_id/point_id。
+    """
+    body = request.get_json(silent=True) or {}
+    image_id = body.get('image_id')
+    try:
+        conc = float(body.get('conc'))
+    except (KeyError, TypeError, ValueError):
+        return jsonify({'error': '浓度必须为数字'}), 400
+    img = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
+    if not img:
+        return jsonify({'error': '图片不存在'}), 404
+    if img['kind'] != 'calibration':
+        return jsonify({'error': '仅标定图可加入标定数据集'}), 400
+    feat = db.query_one(_db_path(), 'SELECT * FROM features WHERE image_id=?', (image_id,))
+    if not feat:
+        return jsonify({'error': '该图尚无特征，请先完成 ROI 与特征提取'}), 400
+    grp = db.query_one(_db_path(), 'SELECT id FROM calibration_groups WHERE conc=?', (conc,))
+    if grp:
+        gid = grp['id']
+    else:
+        gid = db.execute(_db_path(),
+                         'INSERT INTO calibration_groups (name, conc) VALUES (?,?)',
+                         (f'C{conc:g}', conc))
+    dup = db.query_one(_db_path(), 'SELECT id FROM calibration_points WHERE image_id=?', (image_id,))
+    if dup:
+        db.execute(_db_path(),
+                   'UPDATE calibration_points SET group_id=?, included=1 WHERE id=?',
+                   (gid, dup['id']))
+        pid, reused = dup['id'], True
+    else:
+        pid = db.execute(_db_path(),
+                         'INSERT INTO calibration_points (group_id, image_id, included) VALUES (?,?,1)',
+                         (gid, image_id))
+        reused = False
+    return jsonify({'ok': True, 'group_id': gid, 'point_id': pid, 'conc': conc, 'reused': reused})
+
+
 @bp.route('/calibration/points/<int:pid>', methods=['POST'])
 def toggle_point(pid):
     """剔除/纳入数据点。body: {included: 0|1}"""
