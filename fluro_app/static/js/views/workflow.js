@@ -105,6 +105,10 @@
       renderPipeStatus(res.results);
       await refreshGallery();
       if (global.FluroApp) global.FluroApp.refreshTopbar();
+      // 问题1（第四批）：流水线状态变化后实时刷新首页工作流卡片
+      if (global.FluroHome && typeof global.FluroHome.refresh === 'function') {
+        global.FluroHome.refresh();
+      }
       // 问题2：自动处理全部后直接跳到结果页显示数据
       const okImgs = (res.results || []).filter(function (r) {
         return r.steps && r.steps.result === 'ok';
@@ -136,6 +140,14 @@
     showWfPanel(2);
     document.getElementById('pp-status').textContent = '已选中图片 #' + id + '，自动执行预处理...';
     runPreprocess(true);
+  }
+
+  // 问题1（第四批）：首页工作流卡片点击某步图像 → 跳到工作流对应步骤并选中该图
+  function openStep(id, step) {
+    markThumbSelected(id);
+    if (step === 1) { showWfPanel(1); return; }
+    showWfPanel(step);                 // 3/4/5/6 面板会自动加载该图数据
+    if (step === 2) runPreprocess(true); // 预处理面板：自动重跑并显示该图最新处理图
   }
 
   function showWfPanel(n) {
@@ -836,6 +848,7 @@
     init: init,
     renderGallery: renderGallery,
     selectImage: selectImage,
+    openStep: openStep,
     showWfPanel: showWfPanel,
     onView: function (name) {
       if (name === 'workflow') init();

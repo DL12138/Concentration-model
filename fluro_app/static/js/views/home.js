@@ -71,31 +71,49 @@
       meta.textContent = '';
       return;
     }
-    meta.textContent = '图片 #' + wf.image_id;
+    meta.textContent = '图片 #' + wf.image_id + '　点击任一步图像可跳转到「检测工作流」对应步骤';
     let html = '<div style="display:flex;gap:10px;flex-wrap:wrap;">';
     const items = [
-      { label: '① 上传原图', url: wf.upload },
+      { label: '① 上传原图', url: wf.upload, step: 1 },
     ];
-    if (wf.preprocess) items.push({ label: '② 预处理后', url: wf.preprocess });
+    if (wf.preprocess) items.push({ label: '② 预处理后', url: wf.preprocess, step: 2 });
     if (wf.channels) {
       (['r', 'g', 'b']).forEach(function (ch) {
-        if (wf.channels[ch]) items.push({ label: '③ 通道 ' + ch.toUpperCase(), url: wf.channels[ch] });
+        if (wf.channels[ch]) items.push({ label: '③ 通道 ' + ch.toUpperCase(), url: wf.channels[ch], step: 3 });
       });
     }
-    if (wf.roi) items.push({ label: '④ ROI 叠加', url: wf.roi });
+    if (wf.roi) items.push({ label: '④ ROI 叠加', url: wf.roi, step: 4 });
     items.forEach(function (it) {
       html += '<div style="text-align:center;max-width:150px;">'
-        + '<a href="' + it.url + '" target="_blank" rel="noopener">'
+        + '<button type="button" data-step="' + it.step + '" data-image="' + wf.image_id + '"'
+        + ' title="点击跳转到检测工作流步骤 ' + it.step + '"'
+        + ' style="padding:0;border:1px solid #d9e2ea;border-radius:6px;background:none;cursor:pointer;display:block;">'
         + '<img src="' + it.url + '?t=' + Date.now() + '" alt="' + esc(it.label) + '"'
-        + ' style="width:150px;height:110px;object-fit:cover;border:1px solid #d9e2ea;border-radius:6px;display:block;"></a>'
+        + ' style="width:150px;height:110px;object-fit:cover;border-radius:6px;display:block;"></button>'
         + '<div style="font-size:12px;color:#55636f;margin-top:4px;">' + esc(it.label) + '</div>'
         + '</div>';
     });
     html += '</div>';
     el.innerHTML = html;
+    // 点击任一步图像 → 跳转检测工作流对应步骤并选中该图（实时联动）
+    el.querySelectorAll('button[data-step]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const step = parseInt(b.dataset.step, 10);
+        const imageId = parseInt(b.dataset.image, 10);
+        if (global.FluroApp && global.FluroApp.switchView) global.FluroApp.switchView('workflow');
+        if (global.FluroWorkflow && typeof global.FluroWorkflow.openStep === 'function') {
+          global.FluroWorkflow.openStep(imageId, step);
+        }
+      });
+    });
   }
 
+  var pollTimer = null;
+
   async function refresh() {
+    // 仅当首页视图可见时刷新（实时显示最新每步图像）
+    const homeView = document.getElementById('view-home');
+    if (homeView && !homeView.classList.contains('active')) return;
     try {
       const s = await global.API.get('/api/home/summary');
       renderLast(s.last_detection);
@@ -110,6 +128,9 @@
 
   function init() {
     refresh();
+    if (pollTimer) clearInterval(pollTimer);
+    // 工作流任何一步处理更新后，首页每步图像实时同步
+    pollTimer = setInterval(refresh, 5000);
   }
 
   function onView() { refresh(); }
