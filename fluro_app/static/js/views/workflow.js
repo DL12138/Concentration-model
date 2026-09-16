@@ -411,12 +411,44 @@
         const res = await global.API.postForm('/api/refs/' + kind, fd);
         status.textContent = (kind === 'dark' ? '暗场' : '平场') + '参考图已保存：' + res.path;
         status.className = 'status-line';
+        loadRefPreviews();
       } catch (e) {
         status.textContent = '参考图上传失败：' + e.message;
         status.className = 'status-line err';
       }
     };
     input.click();
+  }
+
+  // 参考图预览：加载并显示暗场/平场参考图缩略
+  async function loadRefPreviews() {
+    const map = { dark: 'pp-dark-prev', flat: 'pp-flat-prev' };
+    try {
+      const res = await global.API.get('/api/refs');
+      Object.keys(map).forEach(function (kind) {
+        const img = document.getElementById(map[kind]);
+        const has = !!res[kind + '_path'];
+        if (has) {
+          img.src = '/api/refs/' + kind + '/image?t=' + Date.now();
+          img.style.display = 'block';
+        } else {
+          img.style.display = 'none';
+          img.removeAttribute('src');
+        }
+      });
+    } catch (e) { /* 预览失败不阻塞 */ }
+  }
+
+  async function clearRef(kind) {
+    try {
+      await global.API.del('/api/refs/' + kind);
+      document.getElementById('pp-status').textContent = (kind === 'dark' ? '暗场' : '平场') + '参考图已清除';
+      document.getElementById('pp-status').className = 'status-line';
+      loadRefPreviews();
+    } catch (e) {
+      document.getElementById('pp-status').textContent = '清除失败：' + e.message;
+      document.getElementById('pp-status').className = 'status-line err';
+    }
   }
 
   var initialized = false;
@@ -488,6 +520,9 @@
     });
     document.getElementById('pp-ref-dark').addEventListener('click', function () { uploadRef('dark'); });
     document.getElementById('pp-ref-flat').addEventListener('click', function () { uploadRef('flat'); });
+    document.getElementById('pp-dark-clear').addEventListener('click', function () { clearRef('dark'); });
+    document.getElementById('pp-flat-clear').addEventListener('click', function () { clearRef('flat'); });
+    loadRefPreviews();
 
     document.getElementById('roi-auto').addEventListener('click', runRoiAuto);
     document.getElementById('roi-save').addEventListener('click', saveRoiManual);

@@ -269,6 +269,29 @@ def get_refs():
     })
 
 
+@bp.route('/refs/<string:kind>/image', methods=['GET'])
+def ref_image(kind):
+    """返回暗场/平场参考图（PNG/原格式）。未设置时 404。"""
+    if kind not in ('dark', 'flat'):
+        return jsonify({'error': 'kind 必须为 dark 或 flat'}), 400
+    path = db.get_setting(_db_path(), f'{kind}_ref_path')
+    if not path or not Path(path).exists():
+        abort(404)
+    return send_file(path)
+
+
+@bp.route('/refs/<string:kind>', methods=['DELETE'])
+def clear_ref(kind):
+    """清除指定参考图（删除文件并清空设置）。"""
+    if kind not in ('dark', 'flat'):
+        return jsonify({'error': 'kind 必须为 dark 或 flat'}), 400
+    path = db.get_setting(_db_path(), f'{kind}_ref_path')
+    if path:
+        Path(path).unlink(missing_ok=True)
+    db.set_setting(_db_path(), f'{kind}_ref_path', None)
+    return jsonify({'ok': True, 'kind': kind})
+
+
 @bp.route('/refs/<string:kind>', methods=['POST'])
 def upload_ref(kind):
     """上传暗场/平场参考图并保存到 settings。kind: dark | flat"""

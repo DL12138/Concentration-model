@@ -130,3 +130,49 @@ def test_p2_rerun_pipeline_all(client):
     for iid in iids:
         st = client.get(f'/api/images/{iid}').get_json()['status']
         assert st in ('ok', 'attention', 'processing')
+
+
+# ============ 问题 3：暗场/平场参考图预览 + 前后对比效果 ============
+
+def _upload_ref(client, kind, color=0):
+    img = np.full((120, 160, 3), color, dtype=np.uint8)
+    ok, buf = cv2.imencode('.png', img[:, :, ::-1])
+    data = {'file': (io.BytesIO(buf.tobytes()), 'ref.png')}
+    return client.post(f'/api/refs/{kind}', data=data, content_type='multipart/form-data')
+
+
+def test_p3_ref_upload_and_preview_image(client):
+    r = _upload_ref(client, 'dark', color=30)
+    assert r.status_code == 200 and r.get_json()['ok'] is True
+    img = _decode(client.get('/api/refs/dark/image'))
+    assert img.shape == (120, 160, 3) and int(img[0, 0, 0]) == 30
+    r2 = _upload_ref(client, 'flat', color=200)
+    assert r2.status_code == 200
+    assert _decode(client.get('/api/refs/flat/image')).shape == (120, 160, 3)
+
+
+def test_p3_ref_not_set_404_and_clear(client):
+    assert client.get('/api/refs/dark/image').status_code == 404
+    _upload_ref(client, 'dark')
+    assert client.get('/api/refs/dark/image').status_code == 200
+    assert client.delete('/api/refs/dark').get_json()['ok'] is True
+    assert client.get('/api/refs/dark/image').status_code == 404
+
+
+def test_p3_ref_changes_processed_image(client):
+    """前后对比：同一张图在有无暗场参考图两种设置下，处理后图像不同。"""
+    iid = _upload(client)
+    _pipeline(client, [iid])
+    client.post('/api/pipeline/' + str(iid) + '/preprocess',
+                json={'filter': 'gaussian', 'kernel': 5, 'use_dark': False, 'use_flat': False})
+    r1 = client.get(f'/api/images/{iid}/processed')
+    before = _decode(r1)
+
+    _upload_ref(client, 'dark', color=40)
+    client.post('/api/pipeline/' + str(iid) + '/preprocess',
+                json={'filter': 'gaussian', 'kernel': 5, 'use_dark': True, 'use_flat': False})
+    r2 = client.get(f'/api/images/{iid}/processed')
+    after = _decode(r2)
+
+    diff = np.abs(before.astype(int) - after.astype(int))
+    assert diff.mean() > 0.5, '暗场校正未改变处理结果（无前后对比差异）'
