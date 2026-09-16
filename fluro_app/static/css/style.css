@@ -120,6 +120,8 @@ h3 { font-size:15px; color:#1f2d3a; }
 .feat-table th, .feat-table td { border:1px solid #dfe6ec; padding:6px 10px; text-align:center; }
 .feat-table th { background:#eef3f6; color:#3c4c5a; }
 .feat-table .dash { color:#8a97a3; }
+.bar { display:inline-block; width:64px; height:10px; background:#eef1f4; border-radius:5px; vertical-align:middle; margin-right:6px; overflow:hidden; }
+.bar-fill { height:100%; border-radius:5px; }
 .algo-list { margin:8px 0 0; padding-left:18px; font-size:13px; line-height:1.9; color:#3c4c5a; }
 .algo-list li b { color:#0f7668; }
 .det-actions { display:flex; gap:10px; margin-top:10px; }

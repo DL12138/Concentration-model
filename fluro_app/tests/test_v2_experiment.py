@@ -415,3 +415,18 @@ def test_p2e_export_empty_table_ok(client):
     text = r.data.decode('utf-8-sig')
     assert 'image_name' in text
     assert text.count('\n') == 1  # 只有表头
+
+
+# ============ 问题 2-F：ROI RGB 柱状图数据契约 ============
+
+def test_p2f_roi_rgb_bar_data(client):
+    """ROI RGB 柱状图数据源：T/Bg 平均 RGB 在 0-255 内且可区分（可视化前提）。"""
+    iid = _upload_img(client, conc=100)  # T 区红色
+    client.post(f'/api/images/{iid}/rois', json={'rois': ROIS_T_BG})
+    d = client.post(f'/api/images/{iid}/features', json={}).get_json()
+    t, bg = d['rois']['T'], d['rois']['Bg']
+    for v in (t['mean_r'], t['mean_g'], t['mean_b'], bg['mean_r'], bg['mean_g'], bg['mean_b']):
+        assert 0 <= v <= 255
+    # T（红）与 Bg（蓝背景）RGB 存在可辨差异（红色通道最突出）
+    assert abs(t['mean_r'] - bg['mean_r']) > 10
+    assert t['mean_r'] > bg['mean_r']

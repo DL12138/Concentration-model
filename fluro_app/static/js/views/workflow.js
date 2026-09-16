@@ -505,6 +505,31 @@
       } catch (e2) {
         chEl.textContent = '通道数据读取失败：' + e2.message;
       }
+      // 各 ROI 平均 RGB 柱状图（问题2-F 可视化）
+      try {
+        const all = await global.API.get('/api/images/' + currentImageId + '/features');
+        const rois = all.rois || {};
+        const names = Object.keys(rois);
+        const barsEl = document.getElementById('feat-bars');
+        if (names.length) {
+          let html = '<table class="feat-table"><thead><tr><th>ROI</th><th>R</th><th>G</th><th>B</th></tr></thead><tbody>';
+          names.forEach(function (n) {
+            const rf = rois[n];
+            const maxV = 255;
+            html += '<tr><td><b>' + esc(n) + '</b></td>'
+              + '<td><div class="bar"><div class="bar-fill" style="width:' + Math.min(100, rf.mean_r / maxV * 100) + '%;background:#e05656;"></div></div>' + Math.round(rf.mean_r) + '</td>'
+              + '<td><div class="bar"><div class="bar-fill" style="width:' + Math.min(100, rf.mean_g / maxV * 100) + '%;background:#3fae6a;"></div></div>' + Math.round(rf.mean_g) + '</td>'
+              + '<td><div class="bar"><div class="bar-fill" style="width:' + Math.min(100, rf.mean_b / maxV * 100) + '%;background:#4a7fd4;"></div></div>' + Math.round(rf.mean_b) + '</td></tr>';
+          });
+          html += '</tbody></table>';
+          barsEl.innerHTML = html;
+          barsEl.className = '';
+        } else {
+          barsEl.textContent = '尚无 ROI 特征：请先完成 ROI 设置并提取特征。';
+        }
+      } catch (e3) {
+        document.getElementById('feat-bars').textContent = '柱状图加载失败：' + e3.message;
+      }
       document.getElementById('feat-status').textContent = '特征已就绪（基于处理后图像）';
       document.getElementById('feat-status').className = 'status-line';
     } catch (e) {
