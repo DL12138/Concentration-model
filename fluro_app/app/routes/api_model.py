@@ -43,9 +43,10 @@ def _collect_calibration_data(feature=None):
     rows = db.query(_db_path(),
                     'SELECT cp.id AS point_id, cp.group_id, cp.included, cp.image_id, '
                     'cp.feature_value, cp.feature_name, cp.source, '
-                    'cg.conc, cg.name AS group_name, cg.unit, f.* '
+                    'cg.conc, cg.name AS group_name, cg.unit, i.replicate AS rep, f.* '
                     'FROM calibration_points cp '
                     'JOIN calibration_groups cg ON cg.id = cp.group_id '
+                    'LEFT JOIN images i ON i.id = cp.image_id '
                     'LEFT JOIN features f ON f.image_id = cp.image_id '
                     'ORDER BY cg.conc, cp.id')
     groups_map = {}
@@ -58,10 +59,15 @@ def _collect_calibration_data(feature=None):
         feat = r.get('feature_value')
         if feat is None:
             feat = r.get(feature) if feature else r.get('hue')
+        feats = {k: r[k] for k in modeling.FEATURES if k in r}
+        # 导入/自定义特征（如 T_R_over_Bg_R）也纳入 features，便于组统计
+        if r.get('feature_name') and r.get('feature_value') is not None:
+            feats.setdefault(str(r['feature_name']).strip(), r['feature_value'])
         groups_map[r['group_id']]['points'].append({
             'point_id': r['point_id'], 'image_id': r['image_id'], 'included': r['included'],
             'source': r.get('source') or 'app',
-            'features': {k: r[k] for k in modeling.FEATURES if k in r},
+            'replicate': r.get('rep'),
+            'features': feats,
             'feature_value': r.get('feature_value'),
         })
         if feature:
@@ -193,13 +199,22 @@ def calibration_data():
             continue
         means = {}
         sds = {}
-        for k in modeling.FEATURES:
+        keys = list(modeling.FEATURES)
+        for p in inc:
+            for fn in p:
+                if fn not in keys:
+                    keys.append(fn)
+        for k in keys:
             vals = [p[k] for p in inc if p.get(k) is not None]
             if vals:
                 means[k] = round(sum(vals) / len(vals), 4)
                 sds[k] = round((sum((v - means[k]) ** 2 for v in vals) / max(len(vals) - 1, 1)) ** 0.5, 4) if len(vals) > 1 else None
+        cvs = {}
+        for k in means:
+            cvs[k] = round(sds[k] / means[k] * 100, 2) if means[k] and sds[k] is not None else None
         g['mean'] = means
         g['sd'] = sds
+        g['cv'] = cvs
         g['n'] = len(inc)
     active = db.query_one(_db_path(), 'SELECT * FROM models WHERE is_active=1 ORDER BY id DESC LIMIT 1')
     models = db.query(_db_path(), 'SELECT * FROM models ORDER BY id DESC')

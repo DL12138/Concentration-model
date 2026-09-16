@@ -54,6 +54,7 @@
       const nameParts = [];
       if (im.filename) nameParts.push(im.filename);
       if (im.known_conc != null) nameParts.push('浓度 ' + im.known_conc + (im.conc_unit ? ' ' + im.conc_unit : ''));
+      if (im.replicate && im.replicate > 1) nameParts.push('重复 ' + im.replicate);
       else if (im.batch) nameParts.push('批次 ' + im.batch);
       info.textContent = nameParts.join(' · ');
       meta.appendChild(info);
@@ -780,7 +781,12 @@
       status.className = 'status-line';
       try {
         const res = await global.API.postForm('/api/images/upload', fd);
-        status.textContent = `上传完成：${res.images.length} 张` + (res.errors && res.errors.length ? `，失败 ${res.errors.length} 张（${res.errors.join('；')}）` : '');
+        let msg = '上传完成：' + res.images.length + ' 张';
+        if (res.images.length && res.images[0].kind === 'calibration' && res.images.length > 1) {
+          msg += '（同一浓度，已自动编号为重复 1~' + res.images.length + '，标定建模页会输出每张结果与均值±误差）';
+        }
+        if (res.errors && res.errors.length) msg += '，失败 ' + res.errors.length + ' 张（' + res.errors.join('；') + '）';
+        status.textContent = msg;
         status.className = res.errors && res.errors.length ? 'status-line err' : 'status-line';
         renderGallery(res.images);
         filesInput.value = '';

@@ -112,17 +112,19 @@ def upload_images():
 
     results = []
     errors = []
-    for f in files:
+    for idx, f in enumerate(files):
         try:
             raw_path, thumb_path, filename = _save_uploaded(f)
         except ValueError as e:
             errors.append(str(e))
             continue
+        # 标定批量上传：同一浓度的多张照片按顺序编号为重复 1..N（第五批问题1）
+        replicate = idx + 1 if kind == 'calibration' else 1
         img_id = db.execute(
             _db_path(),
-            'INSERT INTO images (file_path, thumb_path, kind, batch, known_conc, conc_unit, filename) '
-            'VALUES (?,?,?,?,?,?,?)',
-            (raw_path, thumb_path, kind, batch, known_conc, conc_unit, filename),
+            'INSERT INTO images (file_path, thumb_path, kind, batch, known_conc, conc_unit, filename, replicate) '
+            'VALUES (?,?,?,?,?,?,?,?)',
+            (raw_path, thumb_path, kind, batch, known_conc, conc_unit, filename, replicate),
         )
         results.append({
             'id': img_id,
@@ -130,6 +132,7 @@ def upload_images():
             'batch': batch,
             'known_conc': known_conc,
             'conc_unit': conc_unit,
+            'replicate': replicate,
             'filename': filename,
             'thumb_url': f'/api/images/{img_id}/thumb',
         })

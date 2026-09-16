@@ -66,12 +66,25 @@
       el.innerHTML = '<div class="empty">暂无标定数据。请上传「标定」图并完成流水线（ROI/特征），再创建浓度分组加入。</div>';
       return;
     }
-    let html = '<table class="md-table"><thead><tr><th>浓度</th><th>分组</th><th>点数</th><th>均值(当前特征)</th><th>SD</th><th>操作</th></tr></thead><tbody>';
+    let html = '<table class="md-table"><thead><tr><th>浓度</th><th>分组</th><th>重复</th><th>各重复值（' + esc(curFeature) + '）</th><th>均值</th><th>SD</th><th>CV%</th><th>操作</th></tr></thead><tbody>';
     groups.forEach(function (g) {
       const m = g.mean ? g.mean[curFeature] : null;
       const s = g.sd ? g.sd[curFeature] : null;
-      html += '<tr><td>' + esc(g.conc) + '</td><td>' + esc(g.name) + '</td><td>' + g.n + '</td>'
-        + '<td>' + (m == null ? '-' : m) + '</td><td>' + (s == null ? '-' : s) + '</td>'
+      const cv = g.cv ? g.cv[curFeature] : null;
+      // 每张重复图的结果（按 replicate 排序）
+      const reps = (g.points || []).filter(function (p) { return p.included; })
+        .map(function (p) {
+          const v = (p.features && p.features[curFeature]) != null ? p.features[curFeature] : p.feature_value;
+          const repNo = p.replicate || '-';
+          return (v == null ? '-' : Number(v).toFixed(4)) + '<span style="color:#8a97a3;">(#' + repNo + ')</span>';
+        })
+        .join('　');
+      html += '<tr><td>' + esc(g.conc) + (g.unit && g.unit !== 'ng/mL' ? ' ' + esc(g.unit) : '') + '</td>'
+        + '<td>' + esc(g.name) + '</td><td>' + g.n + '</td>'
+        + '<td>' + (reps || '-') + '</td>'
+        + '<td>' + (m == null ? '-' : Number(m).toFixed(4)) + '</td>'
+        + '<td>' + (s == null ? '-' : Number(s).toFixed(4)) + '</td>'
+        + '<td>' + (cv == null ? '-' : cv) + '</td>'
         + '<td><button class="btn small" data-del="' + g.id + '">删除分组</button></td></tr>';
     });
     html += '</tbody></table>';
