@@ -94,3 +94,99 @@ def test_p1_roi_names_saved_for_modeling(client):
     client.put('/api/experiment', json={'roi_names': ['T', 'Bg']})
     ex = client.get('/api/experiment').get_json()
     assert ex['roi_names'] == ['T', 'Bg']
+
+
+# ============ 问题 2-A：多命名 ROI 引擎（T/Bg） ============
+
+ROIS_T_BG = [
+    {'name': 'T', 'role': 'sample', 'x': 0.335, 'y': 0.28, 'w': 0.33, 'h': 0.44, 'bg_subtract': 0},
+    {'name': 'Bg', 'role': 'background', 'x': 0.10, 'y': 0.10, 'w': 0.20, 'h': 0.30, 'bg_subtract': 0},
+]
+
+
+def _upload_img(client, conc=50, kind='detection'):
+    import io
+    import cv2 as _cv2
+    from tools import make_test_images as _mti
+    img = _mti.make_test_image(conc)
+    ok, buf = _cv2.imencode('.png', img[:, :, ::-1])
+    data = {'files': [(io.BytesIO(buf.tobytes()), 't.png')], 'kind': kind}
+    if kind == 'calibration':
+        data['known_conc'] = str(conc)
+    return client.post('/api/images/upload', data=data, content_type='multipart/form-data').get_json()['images'][0]['id']
+
+
+def test_p2a_save_and_get_multi_rois(client):
+    iid = _upload_img(client)
+    r = client.post(f'/api/images/{iid}/rois', json={'rois': ROIS_T_BG})
+    assert r.status_code == 200
+    got = client.get(f'/api/images/{iid}/rois').get_json()['rois']
+    assert len(got) == 2
+    names = sorted(x['name'] for x in got)
+    assert names == ['Bg', 'T']
+    t = next(x for x in got if x['name'] == 'T')
+    assert t['role'] == 'sample'
+    bg = next(x for x in got if x['name'] == 'Bg')
+    assert bg['role'] == 'background'
+
+
+def test_p2a_multi_roi_validation(client):
+    iid = _upload_img(client)
+    assert client.post(f'/api/images/{iid}/rois', json={'rois': []}).status_code == 400
+    dup = [dict(ROIS_T_BG[0]), dict(ROIS_T_BG[0])]
+    dup[0]['name'] = 'T'
+    assert client.post(f'/api/images/{iid}/rois', json={'rois': dup}).status_code == 400
+    bad = [dict(ROIS_T_BG[0], x=1.5)]
+    assert client.post(f'/api/images/{iid}/rois', json={'rois': bad}).status_code == 400
+    missing = [{'name': 'T'}]
+    assert client.post(f'/api/images/{iid}/rois', json={'rois': missing}).status_code == 400
+
+
+def test_p2a_main_roi_synced_to_legacy(client):
+    """多 ROI 保存后，主检测区（T）同步到旧 roi 表，兼容原有特征/检测链路。"""
+    iid = _upload_img(client)
+    client.post(f'/api/images/{iid}/rois', json={'rois': ROIS_T_BG})
+    legacy = client.get(f'/api/pipeline/{iid}/roi').get_json()['roi']
+    assert legacy is not None
+    assert abs(legacy['x'] - ROIS_T_BG[0]['x']) < 1e-6
+
+
+def test_p2a_features_use_main_roi(client):
+    iid = _upload_img(client, conc=50)
+    client.post('/api/pipeline/run', json={'image_ids': [iid]})
+    client.post(f'/api/images/{iid}/rois', json={'rois': ROIS_T_BG})
+    f = client.get(f'/api/pipeline/{iid}/features').get_json()['features']
+    assert f['mean_r'] is not None and f['hue'] is not None
+
+
+def test_p2a_template_multi_roi_apply(client):
+    iid = _upload_img(client)
+    tpl = {
+        'name': '卡片模板',
+        'template_json': {
+            'T': {'x': 0.335, 'y': 0.28, 'w': 0.33, 'h': 0.44, 'role': 'sample'},
+            'Bg': {'x': 0.10, 'y': 0.10, 'w': 0.20, 'h': 0.30, 'role': 'background'},
+        },
+    }
+    tid = client.post('/api/templates', json=tpl).get_json()['id']
+    r = client.post(f'/api/images/{iid}/rois/apply_template', json={'template_id': tid})
+    assert r.status_code == 200
+    got = client.get(f'/api/images/{iid}/rois').get_json()['rois']
+    assert len(got) == 2 and sorted(x['name'] for x in got) == ['Bg', 'T']
+    assert all(x['source'] == 'template' for x in got)
+
+
+def test_p2a_apply_legacy_single_template_as_t(client):
+    iid = _upload_img(client)
+    tid = client.post('/api/templates', json={'name': '单ROI', 'x': 0.3, 'y': 0.3, 'w': 0.4, 'h': 0.4}).get_json()['id']
+    r = client.post(f'/api/images/{iid}/rois/apply_template', json={'template_id': tid})
+    assert r.status_code == 200
+    got = client.get(f'/api/images/{iid}/rois').get_json()['rois']
+    assert len(got) == 1 and got[0]['name'] == 'T'
+
+
+def test_p2a_overlay_all_rois(client):
+    iid = _upload_img(client)
+    client.post(f'/api/images/{iid}/rois', json={'rois': ROIS_T_BG})
+    r = client.get(f'/api/images/{iid}/overlay')
+    assert r.status_code == 200 and r.headers['Content-Type'].startswith('image/png')

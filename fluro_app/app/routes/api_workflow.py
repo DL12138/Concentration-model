@@ -152,37 +152,50 @@ def _png_response(img_rgb):
 
 @bp.route('/images/<int:image_id>/overlay')
 def image_overlay(image_id):
-    """处理后图（无则原图）叠加 ROI 框，返回 PNG。用于各步骤的图片展示。"""
+    """处理后图（无则原图）叠加全部命名 ROI 框与名称，返回 PNG。用于各步骤的图片展示。"""
     row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
     if not row:
         abort(404)
     img = _source_image(row)
     if img is None:
         abort(404)
-    roi_row = db.query_one(_db_path(), 'SELECT * FROM roi WHERE image_id=?', (image_id,))
-    if roi_row:
-        try:
-            x0, y0, x1, y1 = roi_to_pixels((roi_row['x'], roi_row['y'], roi_row['w'], roi_row['h']), img.shape)
-            cv2.rectangle(img, (x0, y0), (x1, y1), (0, 255, 255), 3)
-        except ValueError:
-            pass
+    rois = db.query(_db_path(), 'SELECT * FROM rois WHERE image_id=? ORDER BY id', (image_id,))
+    if rois:
+        colors = [(0, 255, 255), (255, 200, 0), (0, 200, 255), (200, 0, 255), (255, 0, 200), (0, 255, 200)]
+        for i, r in enumerate(rois):
+            try:
+                x0, y0, x1, y1 = roi_to_pixels((r['x'], r['y'], r['w'], r['h']), img.shape)
+            except ValueError:
+                continue
+            col = colors[i % len(colors)]
+            cv2.rectangle(img, (x0, y0), (x1, y1), col, 3)
+            cv2.putText(img, str(r['name']), (x0, max(14, y0 - 6)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2)
+    else:
+        roi_row = db.query_one(_db_path(), 'SELECT * FROM roi WHERE image_id=?', (image_id,))
+        if roi_row:
+            try:
+                x0, y0, x1, y1 = roi_to_pixels((roi_row['x'], roi_row['y'], roi_row['w'], roi_row['h']), img.shape)
+                cv2.rectangle(img, (x0, y0), (x1, y1), (0, 255, 255), 3)
+            except ValueError:
+                pass
     return _png_response(img)
 
 
 @bp.route('/images/<int:image_id>/roi_crop')
 def image_roi_crop(image_id):
-    """ROI 区域裁剪图（处理后图优先）。无 ROI 返回 404。"""
+    """主检测区（T）裁剪图（处理后图优先）。无 ROI 返回 404。"""
     row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
     if not row:
         abort(404)
     img = _source_image(row)
     if img is None:
         abort(404)
-    roi_row = db.query_one(_db_path(), 'SELECT * FROM roi WHERE image_id=?', (image_id,))
-    if not roi_row:
+    main = _main_roi_rect(image_id)
+    if not main:
         abort(404)
     try:
-        crop = crop_roi(img, (roi_row['x'], roi_row['y'], roi_row['w'], roi_row['h']))
+        crop = crop_roi(img, (main[1], main[2], main[3], main[4]))
     except ValueError:
         abort(404)
     return _png_response(crop)
@@ -190,18 +203,18 @@ def image_roi_crop(image_id):
 
 @bp.route('/images/<int:image_id>/roi_avg')
 def image_roi_avg(image_id):
-    """ROI 区域平均色块图（128x128 纯色 PNG）。无 ROI 返回 404。"""
+    """主检测区（T）平均色块图（128x128 纯色 PNG）。无 ROI 返回 404。"""
     row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
     if not row:
         abort(404)
     img = _source_image(row)
     if img is None:
         abort(404)
-    roi_row = db.query_one(_db_path(), 'SELECT * FROM roi WHERE image_id=?', (image_id,))
-    if not roi_row:
+    main = _main_roi_rect(image_id)
+    if not main:
         abort(404)
     try:
-        crop = crop_roi(img, (roi_row['x'], roi_row['y'], roi_row['w'], roi_row['h']))
+        crop = crop_roi(img, (main[1], main[2], main[3], main[4]))
     except ValueError:
         abort(404)
     mean = crop.reshape(-1, 3).mean(axis=0).astype(np.uint8)
@@ -462,6 +475,137 @@ def _active_template():
                         'SELECT * FROM roi_templates WHERE is_active=1 ORDER BY id DESC LIMIT 1')
 
 
+# ---- 问题2-A：多命名 ROI（单卡片 T/Bg）----
+
+def _main_roi_rect(image_id):
+    """主检测区：优先 rois 表 role='sample'（或首个），回退旧 roi 表（兼容迁移前数据）。"""
+    rows = db.query(_db_path(), 'SELECT * FROM rois WHERE image_id=? ORDER BY id', (image_id,))
+    if rows:
+        for r in rows:
+            if r['role'] == 'sample':
+                return (r['name'], r['x'], r['y'], r['w'], r['h'], r.get('bg_subtract') or 0)
+        r0 = rows[0]
+        return (r0['name'], r0['x'], r0['y'], r0['w'], r0['h'], r0.get('bg_subtract') or 0)
+    old = db.query_one(_db_path(), 'SELECT * FROM roi WHERE image_id=?', (image_id,))
+    if old:
+        return ('T', old['x'], old['y'], old['w'], old['h'], old.get('bg_subtract') or 0)
+    return None
+
+
+def _validate_roi_items(items):
+    """校验 ROI 列表，返回 [(name, role, x, y, w, h, bg_subtract)]，非法抛 ValueError。"""
+    if not isinstance(items, list) or not items:
+        raise ValueError('rois 不能为空')
+    seen, clean = set(), []
+    for it in items:
+        try:
+            name = str(it['name']).strip()
+            x, y, w, h = (float(it[k]) for k in ('x', 'y', 'w', 'h'))
+        except (KeyError, TypeError, ValueError):
+            raise ValueError('每个 ROI 需 name 与数字 x/y/w/h')
+        if not name:
+            raise ValueError('ROI 名称不能为空')
+        if name in seen:
+            raise ValueError(f'ROI 名称重复：{name}')
+        seen.add(name)
+        if not (0 <= x < 1 and 0 <= y < 1 and 0 < w <= 1 and 0 < h <= 1 and x + w <= 1 and y + h <= 1):
+            raise ValueError(f'ROI {name} 超出图像范围')
+        role = str(it.get('role') or 'sample').strip() or 'sample'
+        if role not in ('sample', 'background', 'color_card', 'blank'):
+            role = 'sample'
+        clean.append((name, role, x, y, w, h, 1 if it.get('bg_subtract') else 0))
+    return clean
+
+
+def _write_rois(image_id, clean, source='manual', recompute=True):
+    """全量写入多 ROI（事务替换），并把主检测区（role=sample 首行）同步到旧 roi 表保持兼容。"""
+    db.execute(_db_path(), 'DELETE FROM rois WHERE image_id=?', (image_id,))
+    for c in clean:
+        db.execute(_db_path(),
+                   'INSERT INTO rois (image_id, name, role, x, y, w, h, source, bg_subtract) '
+                   'VALUES (?,?,?,?,?,?,?,?,?)',
+                   (image_id, c[0], c[1], c[2], c[3], c[4], c[5], source, c[6]))
+    main = next((c for c in clean if c[1] == 'sample'), clean[0])
+    existing = db.query_one(_db_path(), 'SELECT id FROM roi WHERE image_id=?', (image_id,))
+    if existing:
+        db.execute(_db_path(),
+                   'UPDATE roi SET x=?, y=?, w=?, h=?, source=?, bg_subtract=?, '
+                   'updated_at=datetime(\'now\',\'localtime\') WHERE id=?',
+                   (main[2], main[3], main[4], main[5], source, main[6], existing['id']))
+    else:
+        db.execute(_db_path(),
+                   'INSERT INTO roi (image_id, x, y, w, h, source, bg_subtract) VALUES (?,?,?,?,?,?,?)',
+                   (image_id, main[2], main[3], main[4], main[5], source, main[6]))
+    _upsert_step(image_id, 'roi',
+                 json.dumps([{'name': c[0], 'role': c[1], 'x': c[2], 'y': c[3], 'w': c[4], 'h': c[5],
+                              'bg_subtract': c[6], 'source': source} for c in clean],
+                            ensure_ascii=False), 'ok')
+    if recompute:
+        from .api_model import recompute_downstream
+        recompute_downstream(image_id)
+
+
+@bp.route('/images/<int:image_id>/rois', methods=['GET'])
+def get_rois(image_id):
+    row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
+    if not row:
+        abort(404)
+    rois = db.query(_db_path(), 'SELECT * FROM rois WHERE image_id=? ORDER BY id', (image_id,))
+    if not rois:
+        old = db.query_one(_db_path(), 'SELECT * FROM roi WHERE image_id=?', (image_id,))
+        if old:
+            rois = [{'name': 'T', 'role': 'sample', 'x': old['x'], 'y': old['y'],
+                     'w': old['w'], 'h': old['h'], 'source': old['source'],
+                     'bg_subtract': old.get('bg_subtract') or 0}]
+    return jsonify({'rois': rois})
+
+
+@bp.route('/images/<int:image_id>/rois', methods=['POST'])
+def save_rois(image_id):
+    """全量保存多命名 ROI（T/Bg 等）。body: {rois: [{name, role, x,y,w,h, bg_subtract}]}"""
+    row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
+    if not row:
+        abort(404)
+    body = request.get_json(silent=True) or {}
+    try:
+        clean = _validate_roi_items(body.get('rois'))
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    _write_rois(image_id, clean, source='manual')
+    return jsonify({'ok': True, 'rois': clean})
+
+
+@bp.route('/images/<int:image_id>/rois/apply_template', methods=['POST'])
+def apply_roi_template(image_id):
+    """套用 ROI 模板（优先多 ROI 集合 template_json；否则单 ROI 作为主检测区 T）。"""
+    row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
+    if not row:
+        abort(404)
+    body = request.get_json(silent=True) or {}
+    tid = body.get('template_id')
+    tpl = db.query_one(_db_path(), 'SELECT * FROM roi_templates WHERE id=?', (tid,)) if tid else _active_template()
+    if not tpl:
+        abort(404)
+    tj = tpl.get('template_json')
+    if tj:
+        try:
+            parsed = json.loads(tj)
+        except Exception:  # noqa: BLE001
+            parsed = None
+        if parsed:
+            items = [dict(r, name=n) for n, r in parsed.items()]
+            try:
+                clean = _validate_roi_items(items)
+            except ValueError as e:
+                return jsonify({'error': str(e)}), 400
+            _write_rois(image_id, clean, source='template')
+            return jsonify({'ok': True, 'rois': clean})
+    items = [{'name': 'T', 'role': 'sample', 'x': tpl['x'], 'y': tpl['y'],
+              'w': tpl['w'], 'h': tpl['h'], 'bg_subtract': 0}]
+    _write_rois(image_id, _validate_roi_items(items), source='template')
+    return jsonify({'ok': True, 'rois': items})
+
+
 @bp.route('/templates', methods=['GET'])
 def list_templates():
     rows = db.query(_db_path(), 'SELECT * FROM roi_templates ORDER BY id DESC')
@@ -472,16 +616,41 @@ def list_templates():
 def create_template():
     body = request.get_json(silent=True) or {}
     name = (body.get('name') or '').strip() or '模板'
-    try:
-        x, y, w, h = (float(body[k]) for k in ('x', 'y', 'w', 'h'))
-    except (KeyError, TypeError, ValueError):
-        return jsonify({'error': 'x/y/w/h 必须为数字'}), 400
-    if not (0 <= x < 1 and 0 <= y < 1 and 0 < w <= 1 and 0 < h <= 1 and x + w <= 1 and y + h <= 1):
-        return jsonify({'error': 'ROI 超出图像范围'}), 400
-    ref_image_id = body.get('ref_image_id')
-    tid = db.execute(_db_path(),
-                     'INSERT INTO roi_templates (name, x, y, w, h, ref_image_id) VALUES (?,?,?,?,?,?)',
-                     (name, x, y, w, h, ref_image_id))
+    template_json = body.get('template_json')
+    if template_json:
+        # 多 ROI 集合模板：{"T": {"x","y","w","h","role"}, "Bg": {...}}
+        if not isinstance(template_json, dict) or not template_json:
+            return jsonify({'error': 'template_json 必须为非空对象'}), 400
+        clean = {}
+        for rname, r in template_json.items():
+            rname = str(rname).strip()
+            if not rname:
+                return jsonify({'error': 'ROI 名称不能为空'}), 400
+            try:
+                x, y, w, h = (float(r[k]) for k in ('x', 'y', 'w', 'h'))
+            except (KeyError, TypeError, ValueError):
+                return jsonify({'error': f'ROI {rname} 的 x/y/w/h 必须为数字'}), 400
+            if not (0 <= x < 1 and 0 <= y < 1 and 0 < w <= 1 and 0 < h <= 1 and x + w <= 1 and y + h <= 1):
+                return jsonify({'error': f'ROI {rname} 超出图像范围'}), 400
+            clean[rname] = {
+                'x': x, 'y': y, 'w': w, 'h': h,
+                'role': str(r.get('role') or 'sample'),
+                'bg_subtract': 1 if r.get('bg_subtract') else 0,
+            }
+        tid = db.execute(_db_path(),
+                         'INSERT INTO roi_templates (name, template_json) VALUES (?,?)',
+                         (name, json.dumps(clean, ensure_ascii=False)))
+    else:
+        try:
+            x, y, w, h = (float(body[k]) for k in ('x', 'y', 'w', 'h'))
+        except (KeyError, TypeError, ValueError):
+            return jsonify({'error': 'x/y/w/h 必须为数字'}), 400
+        if not (0 <= x < 1 and 0 <= y < 1 and 0 < w <= 1 and 0 < h <= 1 and x + w <= 1 and y + h <= 1):
+            return jsonify({'error': 'ROI 超出图像范围'}), 400
+        ref_image_id = body.get('ref_image_id')
+        tid = db.execute(_db_path(),
+                         'INSERT INTO roi_templates (name, x, y, w, h, ref_image_id) VALUES (?,?,?,?,?,?)',
+                         (name, x, y, w, h, ref_image_id))
     if _active_template() is None:
         db.execute(_db_path(), 'UPDATE roi_templates SET is_active=1 WHERE id=?', (tid,))
     return jsonify({'ok': True, 'id': tid, 'is_active': True if _active_template() and _active_template()['id'] == tid else False})
@@ -550,6 +719,19 @@ def save_roi(image_id):
                    (image_id, x, y, w, h, source, bg_subtract))
     _upsert_step(image_id, 'roi', json.dumps({'x': x, 'y': y, 'w': w, 'h': h, 'source': source, 'bg_subtract': bg_subtract}, ensure_ascii=False), 'ok')
 
+    # 同步多 ROI 表主检测区（单 ROI 编辑语义 → role='sample'）
+    main_row = db.query_one(_db_path(),
+                            "SELECT id FROM rois WHERE image_id=? AND role='sample'", (image_id,))
+    if main_row:
+        db.execute(_db_path(),
+                   'UPDATE rois SET x=?, y=?, w=?, h=?, source=?, bg_subtract=? WHERE id=?',
+                   (x, y, w, h, source, bg_subtract, main_row['id']))
+    else:
+        db.execute(_db_path(),
+                   'INSERT INTO rois (image_id, name, role, x, y, w, h, source, bg_subtract) '
+                   'VALUES (?,?,?,?,?,?,?,?,?)',
+                   (image_id, 'T', 'sample', x, y, w, h, source, bg_subtract))
+
     # 级联：ROI 变更后重算特征与结果
     from .api_model import recompute_downstream
     recompute_downstream(image_id)
@@ -603,6 +785,15 @@ def auto_roi_core(image_id):
         db.execute(_db_path(),
                    'INSERT INTO roi (image_id, x, y, w, h, source, bg_subtract) VALUES (?,?,?,?,?,?,?)',
                    (image_id, roi[0], roi[1], roi[2], roi[3], 'auto', 0))
+    # 多 ROI 表同步：自动识别结果作为主检测区（实验配置首个 ROI 名或 T）
+    try:
+        exp = json.loads(db.get_setting(_db_path(), 'experiment') or '{}')
+    except Exception:  # noqa: BLE001
+        exp = {}
+    main_name = (exp.get('roi_names') or ['T'])[0] if exp.get('roi_names') else 'T'
+    clean = [(main_name, 'sample', roi[0], roi[1], roi[2], roi[3], bg)]
+    _write_rois(image_id, clean, source='auto', recompute=False)
+
     _upsert_step(image_id, 'roi', json.dumps({'x': roi[0], 'y': roi[1], 'w': roi[2], 'h': roi[3], 'source': 'auto', 'bg_subtract': bg}, ensure_ascii=False), 'ok')
 
     from .api_model import recompute_downstream
@@ -615,15 +806,15 @@ def compute_features_core(image_id):
     row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
     if not row:
         raise KeyError(image_id)
-    roi_row = db.query_one(_db_path(), 'SELECT * FROM roi WHERE image_id=?', (image_id,))
-    if not roi_row:
+    main = _main_roi_rect(image_id)
+    if not main:
         raise ValueError('请先设置 ROI（自动套用或手动框选）')
     img = _source_image(row)
     if img is None:
         raise ValueError('图像无法读取')
-    roi_rect = (roi_row['x'], roi_row['y'], roi_row['w'], roi_row['h'])
+    roi_rect = (main[1], main[2], main[3], main[4])
     feats = extract_features(img, roi_rect)
-    if roi_row.get('bg_subtract'):
+    if main[5]:
         bg = bg_ring_mean(img, roi_rect)
         feats = apply_bg_subtraction(feats, bg)
 

@@ -99,6 +99,22 @@ MIGRATIONS = [
     (3, [
         """ALTER TABLE roi ADD COLUMN bg_subtract INTEGER NOT NULL DEFAULT 0""",
     ]),
+    (4, [
+        # 单卡片槽比色检测：每张图多个命名 ROI（T 检测区、Bg 背景区等）
+        """CREATE TABLE IF NOT EXISTS rois (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            image_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'sample',   -- sample|background|color_card|blank
+            x REAL, y REAL, w REAL, h REAL,
+            source TEXT NOT NULL DEFAULT 'manual', -- auto|manual|template
+            bg_subtract INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            UNIQUE(image_id, name)
+        )""",
+        # 模板扩展：支持多 ROI 集合（JSON：{"T": {...}, "Bg": {...}}）
+        """ALTER TABLE roi_templates ADD COLUMN template_json TEXT""",
+    ]),
 ]
 
 
