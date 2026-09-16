@@ -16,7 +16,8 @@ def _db_path():
 
 def run_single(image_id):
     """执行单张图的完整流水线。返回该图各步骤状态。"""
-    from .routes.api_workflow import preprocess_core, auto_roi_core, compute_features_core, channels_core
+    from .routes.api_workflow import preprocess_core, auto_roi_core, channels_core
+    from .routes.api_workflow import compute_all_roi_features_core as compute_features_core
     from .routes.api_model import run_detection
 
     result = {'image_id': image_id, 'steps': {}, 'status': 'ok'}

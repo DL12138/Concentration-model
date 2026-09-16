@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """工作流相关 API：上传（M1）→ 预处理（M2）→ ROI/特征（M3）→ 流水线/结果（M4+）。"""
 import io
 import json
@@ -703,7 +703,7 @@ def _write_rois(image_id, clean, source='manual', recompute=True):
                    'VALUES (?,?,?,?,?,?,?,?,?)',
                    (image_id, c[0], c[1], c[2], c[3], c[4], c[5], source, c[6]))
     main = next((c for c in clean if c[1] == 'sample'), clean[0])
-    existing = db.query_one(_db_path(), 'SELECT id FROM roi WHERE image_id=?', (image_id,))
+    existing = db.query_one(_db_path(), 'SELECT * FROM roi WHERE image_id=?', (image_id,))
     if existing:
         db.execute(_db_path(),
                    'UPDATE roi SET x=?, y=?, w=?, h=?, source=?, bg_subtract=?, '
@@ -885,7 +885,7 @@ def save_roi(image_id):
         source = 'manual'
     bg_subtract = 1 if body.get('bg_subtract') else 0
 
-    existing = db.query_one(_db_path(), 'SELECT id FROM roi WHERE image_id=?', (image_id,))
+    existing = db.query_one(_db_path(), 'SELECT * FROM roi WHERE image_id=?', (image_id,))
     if existing:
         db.execute(_db_path(),
                    'UPDATE roi SET x=?, y=?, w=?, h=?, source=?, bg_subtract=?, updated_at=datetime(\'now\',\'localtime\') WHERE id=?',
@@ -940,6 +940,20 @@ def auto_roi_core(image_id):
     if img is None:
         raise ValueError('图像无法读取')
     tpl = _active_template()
+    if tpl and tpl.get('template_json'):
+        # 多 ROI 集合模板（问题2）：T/Bg 等直接套用，无需图像匹配
+        try:
+            tj = json.loads(tpl['template_json'])
+        except Exception as e:  # noqa: BLE001
+            raise ValueError(f'模板数据解析失败：{e}')
+        clean = []
+        for rname, r in tj.items():
+            role = str(r.get('role') or 'sample')
+            clean.append((rname, role, float(r['x']), float(r['y']),
+                          float(r['w']), float(r['h']), 1 if r.get('bg_subtract') else 0))
+        _write_rois(image_id, clean, source='template', recompute=False)
+        _upsert_step(image_id, 'roi', json.dumps({'source': 'template', 'n': len(clean)}, ensure_ascii=False), 'ok')
+        return len(clean)
     if tpl:
         ref_img = None
         if tpl.get('ref_image_id'):
@@ -952,7 +966,7 @@ def auto_roi_core(image_id):
         if roi is None:
             raise ValueError('自动识别未找到明显检测区，请手动框选')
 
-    existing = db.query_one(_db_path(), 'SELECT id FROM roi WHERE image_id=?', (image_id,))
+    existing = db.query_one(_db_path(), 'SELECT * FROM roi WHERE image_id=?', (image_id,))
     bg = existing['bg_subtract'] if existing else 0
     if existing:
         db.execute(_db_path(),
@@ -1128,3 +1142,4 @@ def get_image_features(image_id):
             continue
     combined = derive_combined_features(feats_map)
     return jsonify({'rois': feats_map, 'combined': combined})
+

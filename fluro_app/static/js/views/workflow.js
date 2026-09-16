@@ -90,6 +90,13 @@
     });
   }
 
+  function markThumbSelected(id) {
+    currentImageId = id;
+    document.querySelectorAll('#up-gallery .gitem').forEach(function (n) {
+      n.classList.toggle('selected', n.dataset.id === String(id));
+    });
+  }
+
   async function runPipeline(ids) {
     const el = document.getElementById('pipe-status');
     el.innerHTML = '<span class="pb pb-uploaded">自动流水线执行中...</span>';
@@ -98,6 +105,23 @@
       renderPipeStatus(res.results);
       await refreshGallery();
       if (global.FluroApp) global.FluroApp.refreshTopbar();
+      // 问题2：自动处理全部后直接跳到结果页显示数据
+      const okImgs = (res.results || []).filter(function (r) {
+        return r.steps && r.steps.result === 'ok';
+      });
+      if (okImgs.length) {
+        markThumbSelected(okImgs[0].image_id);
+        showWfPanel(6);
+        await loadResultPanel();
+        el.innerHTML = '<span class="pb pb-ok">自动流水线完成：' + okImgs.length + ' 张图已产出检测结果（已显示第一张）。</span>';
+      } else if (res.results && res.results.length) {
+        const hasAttention = res.results.some(function (r) {
+          return r.steps && r.steps.result === 'attention';
+        });
+        el.innerHTML = hasAttention
+          ? '<span class="pb pb-attention">流水线已跑完，但尚未保存生效标定模型，无法产出检测结果。请先到「标定建模」页拟合并保存模型，再回来重试。</span>'
+          : '<span class="pb pb-uploaded">流水线已跑完（标定图无需检测）。</span>';
+      }
     } catch (e) {
       el.innerHTML = '<span class="pb pb-error">流水线执行失败：' + e.message + '</span>';
     }
