@@ -89,7 +89,11 @@ def test_fit_returns_four_models_and_best(client):
     assert resp.status_code == 200
     j = resp.get_json()
     assert j['ok'] and j['n'] == 5
-    assert set(j['results'].keys()) == {'linear', 'poly2', 'exp', '4pl'}
+    # 问题2-J：主模型扩展为 linear/poly2/log/exp/4pl/pls，另有 svr/rf 对比模型
+    assert {'linear', 'poly2', 'exp', '4pl'} <= set(j['results'].keys())
+    assert {'log', 'pls'} <= set(j['results'].keys())
+    assert {'svr', 'rf'} <= set(j['results'].keys())
+    assert j['results']['svr']['compare'] is True
     # G/R 比值随浓度单调下降：conc=0 → ~5.8，conc=100 → ~0.17
     lin = j['results']['linear']
     assert 'error' not in lin
