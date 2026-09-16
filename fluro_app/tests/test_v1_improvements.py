@@ -223,3 +223,46 @@ def test_p4_overlay_shows_after_manual_save(client):
     _pipeline(client, [iid])
     client.post(f'/api/pipeline/{iid}/roi', json=dict(TEMPLATE, source='manual', bg_subtract=0))
     assert client.get(f'/api/images/{iid}/overlay').status_code == 200
+
+
+# ============ 问题 5：RGB 通道分离流程界面 ============
+
+def test_p5_channels_compute_and_get(client):
+    iid = _upload(client, conc=50)
+    _pipeline(client, [iid])
+    r = client.post(f'/api/pipeline/{iid}/channels', json={})
+    assert r.status_code == 200
+    c = r.get_json()['channels']
+    assert c['r_url'] and c['g_url'] and c['b_url']
+    assert abs(c['mean_r'] - 50) < 60  # 合成图 R 通道有值（绿图 R≈50）
+    got = client.get(f'/api/pipeline/{iid}/channels').get_json()['channels']
+    assert got['mean_g'] == c['mean_g']
+
+
+def test_p5_channel_images_served(client):
+    iid = _upload(client, conc=100)
+    _pipeline(client, [iid])
+    client.post(f'/api/pipeline/{iid}/channels', json={})
+    for ch in 'rgb':
+        r = client.get(f'/api/images/{iid}/channel/{ch}')
+        assert r.status_code == 200 and r.headers['Content-Type'].startswith('image/png')
+        gray = _decode(r)
+        assert gray.shape[2] == 3
+    assert client.get(f'/api/images/{iid}/channel/x').status_code == 400
+
+
+def test_p5_pipeline_includes_channels_step(client):
+    iid = _upload(client, conc=50)
+    res = client.post('/api/pipeline/run', json={'image_ids': [iid]}).get_json()
+    assert res['results'][0]['steps']['channels'] == 'ok'
+    assert client.get(f'/api/pipeline/{iid}/channels').get_json()['channels'] is not None
+
+
+def test_p5_delete_cleans_channel_files(client):
+    iid = _upload(client, conc=50)
+    _pipeline(client, [iid])
+    client.post(f'/api/pipeline/{iid}/channels', json={})
+    cdir = Path(client.application.config['DATA_DIR']) / 'processed' / 'channels'
+    assert (cdir / f'{iid}_r.png').exists()
+    client.delete(f'/api/images/{iid}')
+    assert not (cdir / f'{iid}_r.png').exists()

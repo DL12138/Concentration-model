@@ -230,6 +230,9 @@ def delete_image(image_id):
               _img_dir('processed') / f'{image_id}.png'):
         if p:
             Path(p).unlink(missing_ok=True)
+    cdir = _data_dir() / 'processed' / 'channels'
+    for ch in 'rgb':
+        (cdir / f'{image_id}_{ch}.png').unlink(missing_ok=True)
     return jsonify({'ok': True})
 
 
@@ -258,6 +261,63 @@ def run_pipeline_single(image_id):
     from ..pipeline import run_single as pipeline_run_single
     result = pipeline_run_single(image_id)
     return jsonify({'ok': True, 'result': result})
+
+
+# ---------------- 问题5：RGB 通道分离 ----------------
+
+def channels_core(image_id):
+    """RGB 通道分离核心：处理后图分离 R/G/B 灰度图并保存。无图抛 KeyError。"""
+    row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
+    if not row:
+        raise KeyError(image_id)
+    img = _source_image(row)
+    if img is None:
+        raise ValueError('图像无法读取')
+    cdir = _data_dir() / 'processed' / 'channels'
+    cdir.mkdir(parents=True, exist_ok=True)
+    info = {}
+    for i, ch in enumerate('rgb'):
+        chan = img[:, :, i]
+        ok, buf = cv2.imencode('.png', chan)
+        if not ok:
+            raise ValueError('通道图编码失败')
+        (cdir / f'{image_id}_{ch}.png').write_bytes(buf.tobytes())
+        info[f'{ch}_url'] = f'/api/images/{image_id}/channel/{ch}'
+        info[f'mean_{ch}'] = round(float(chan.mean()), 3)
+    _upsert_step(image_id, 'channels', json.dumps(info, ensure_ascii=False), 'ok')
+    return info
+
+
+@bp.route('/pipeline/<int:image_id>/channels', methods=['POST'])
+def compute_channels(image_id):
+    try:
+        info = channels_core(image_id)
+    except KeyError:
+        abort(404)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    return jsonify({'ok': True, 'channels': info})
+
+
+@bp.route('/pipeline/<int:image_id>/channels', methods=['GET'])
+def get_channels(image_id):
+    step = db.query_one(_db_path(),
+                        'SELECT * FROM pipeline_steps WHERE image_id=? AND step=?',
+                        (image_id, 'channels'))
+    if not step:
+        return jsonify({'channels': None})
+    info = json.loads(step['params_json'] or '{}')
+    return jsonify({'channels': info})
+
+
+@bp.route('/images/<int:image_id>/channel/<string:ch>', methods=['GET'])
+def channel_image(image_id, ch):
+    if ch not in ('r', 'g', 'b'):
+        return jsonify({'error': 'ch 必须为 r/g/b'}), 400
+    p = _data_dir() / 'processed' / 'channels' / f'{image_id}_{ch}.png'
+    if not p.exists():
+        abort(404)
+    return send_file(str(p))
 
 
 # ---------------- M2：预处理 ----------------

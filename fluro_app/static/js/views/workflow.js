@@ -117,9 +117,10 @@
       s.classList.toggle('active', s.dataset.wf === String(n));
       s.classList.toggle('done', parseInt(s.dataset.wf, 10) < n);
     });
-    if (n === 3) loadRoiPanel();
-    if (n === 4) refreshFeatures();
-    if (n === 5) loadResultPanel();
+    if (n === 3) loadChannelsPanel();
+    if (n === 4) loadRoiPanel();
+    if (n === 5) refreshFeatures();
+    if (n === 6) loadResultPanel();
   }
 
   // ---- M6：检测结果 ----
@@ -231,6 +232,51 @@
     } catch (e) { /* 忽略 */ }
   }
 
+  // ---- 问题5：RGB 通道分离 ----
+  async function loadChannelsPanel() {
+    if (!currentImageId) return;
+    const status = document.getElementById('ch-status');
+    const zone = document.getElementById('ch-zone');
+    try {
+      const res = await global.API.get('/api/pipeline/' + currentImageId + '/channels');
+      if (!res.channels || !res.channels.r_url) {
+        zone.innerHTML = '<div class="empty">尚无通道数据：点击「重新分离通道」生成（基于处理后图像）。</div>';
+        status.textContent = '';
+        return;
+      }
+      const c = res.channels;
+      const t = Date.now();
+      zone.innerHTML =
+        '<div class="ch-grid">'
+        + '<figure><img src="' + c.r_url + '?t=' + t + '" alt="R 通道"><figcaption>R 通道（均值 ' + c.mean_r + '）</figcaption></figure>'
+        + '<figure><img src="' + c.g_url + '?t=' + t + '" alt="G 通道"><figcaption>G 通道（均值 ' + c.mean_g + '）</figcaption></figure>'
+        + '<figure><img src="' + c.b_url + '?t=' + t + '" alt="B 通道"><figcaption>B 通道（均值 ' + c.mean_b + '）</figcaption></figure>'
+        + '</div>'
+        + '<div class="hint">通道均值与「特征提取」中的平均 R/G/B 对应（特征基于 ROI 区域，此处为全图均值）。</div>';
+      status.textContent = '通道已分离（基于处理后图像）';
+      status.className = 'status-line';
+    } catch (e) {
+      status.textContent = '通道数据读取失败：' + e.message;
+      status.className = 'status-line err';
+    }
+  }
+
+  async function runChannels() {
+    if (!currentImageId) {
+      document.getElementById('ch-status').textContent = '请先选中一张图';
+      return;
+    }
+    const status = document.getElementById('ch-status');
+    status.textContent = '分离中...';
+    try {
+      await global.API.post('/api/pipeline/' + currentImageId + '/channels', {});
+      await loadChannelsPanel();
+    } catch (e) {
+      status.textContent = '通道分离失败：' + e.message;
+      status.className = 'status-line err';
+    }
+  }
+
   async function loadRoiPanel() {
     if (!currentImageId) return;
     const status = document.getElementById('roi-status');
@@ -312,7 +358,7 @@
       status.textContent = 'ROI 已保存，特征已级联重算';
       status.className = 'status-line';
       refreshRoiOverlay();
-      showWfPanel(4);
+      showWfPanel(5);
     } catch (e) {
       status.textContent = '保存失败：' + e.message;
       status.className = 'status-line err';
@@ -539,6 +585,7 @@
     });
 
     document.getElementById('pp-run').addEventListener('click', function () { runPreprocess(false); });
+    document.getElementById('ch-run').addEventListener('click', runChannels);
     document.getElementById('pp-slider').addEventListener('input', function (e) {
       document.getElementById('pp-overlay').style.width = e.target.value + '%';
     });

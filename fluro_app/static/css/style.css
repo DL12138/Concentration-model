@@ -125,6 +125,10 @@ h3 { font-size:15px; color:#1f2d3a; }
 .feat-imgs img, .result-imgs img { display:block; max-width:280px; max-height:210px; border:1px solid #dfe6ec; border-radius:8px; background:#f6f8fa; }
 .feat-imgs figcaption, .result-imgs figcaption { font-size:12px; color:#8a97a3; text-align:center; margin-top:4px; }
 .ref-previews { display:flex; flex-wrap:wrap; gap:14px; margin-top:12px; }
+.ch-grid { display:flex; flex-wrap:wrap; gap:14px; margin-top:12px; }
+.ch-grid figure { margin:0; max-width:280px; }
+.ch-grid img { display:block; max-width:280px; max-height:210px; border:1px solid #dfe6ec; border-radius:8px; background:#f6f8fa; }
+.ch-grid figcaption { font-size:12px; color:#55636f; text-align:center; margin-top:4px; }
 .ref-item { margin:0; max-width:220px; }
 .ref-item img { display:block; max-width:220px; max-height:150px; border:1px solid #dfe6ec; border-radius:8px; background:#f6f8fa; }
 .ref-item figcaption { font-size:12px; color:#55636f; margin-top:4px; }

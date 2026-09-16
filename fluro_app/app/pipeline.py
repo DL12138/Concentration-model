@@ -16,7 +16,7 @@ def _db_path():
 
 def run_single(image_id):
     """执行单张图的完整流水线。返回该图各步骤状态。"""
-    from .routes.api_workflow import preprocess_core, auto_roi_core, compute_features_core
+    from .routes.api_workflow import preprocess_core, auto_roi_core, compute_features_core, channels_core
     from .routes.api_model import run_detection
 
     result = {'image_id': image_id, 'steps': {}, 'status': 'ok'}
@@ -32,6 +32,13 @@ def run_single(image_id):
     except Exception as e:  # noqa: BLE001
         result['steps']['preprocess'] = 'error'
         result['status'] = 'attention'
+
+    # 1.5 通道分离（问题5 新增步骤：预处理后、ROI 前）
+    try:
+        channels_core(image_id)
+        result['steps']['channels'] = 'ok'
+    except Exception:  # noqa: BLE001
+        result['steps']['channels'] = 'attention'
 
     # 2. ROI（有激活模板则自动套用）
     roi_ok = False
