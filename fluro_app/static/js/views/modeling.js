@@ -151,8 +151,11 @@
 
   function renderModels(res) {
     const el = document.getElementById('md-models');
-    const order = ['linear', 'poly2', 'exp', '4pl'];
-    const names = { linear: '线性', poly2: '二次多项式', exp: '指数', '4pl': '四参数逻辑 4PL' };
+    const order = ['linear', 'poly2', 'log', 'exp', '4pl', 'pls', 'svr', 'rf'];
+    const names = {
+      linear: '线性', poly2: '二次多项式', log: '对数', exp: '指数',
+      '4pl': '四参数逻辑 4PL', pls: 'PLSR', svr: 'SVR（对比）', rf: '随机森林（对比）',
+    };
     let html = '<table class="md-table"><thead><tr><th></th><th>模型</th><th>R²</th><th>RMSE</th><th>LOD</th><th>状态</th></tr></thead><tbody>';
     order.forEach(function (mt) {
       const r = res.results[mt];
@@ -160,7 +163,7 @@
       const isBest = res.best === mt;
       html += '<tr class="' + (selectedType === mt ? 'sel' : '') + '" data-type="' + mt + '" style="cursor:pointer;">'
         + '<td>' + (isBest ? '<span class="pb pb-ok">推荐</span>' : '') + '</td>'
-        + '<td>' + names[mt] + '</td>';
+        + '<td>' + names[mt] + (r.compare ? ' <span class="gstatus st-attention">仅对比</span>' : '') + '</td>';
       if (r.error) {
         html += '<td colspan="3" class="err-text">' + esc(r.error) + '</td>';
       } else {
@@ -169,7 +172,7 @@
       html += '<td>' + (selectedType === mt ? '选中' : '') + '</td></tr>';
     });
     html += '</tbody></table>';
-    html += '<div class="hint">点击行选中模型，再点「保存所选为生效模型」。</div>';
+    html += '<div class="hint">点击行选中模型，再点「保存所选为生效模型」；SVR/随机森林仅作对比，不可保存为生效模型。</div>';
     el.innerHTML = html;
     el.querySelectorAll('tr[data-type]').forEach(function (tr) {
       tr.addEventListener('click', function () {
@@ -278,6 +281,10 @@
       document.getElementById('md-status').textContent = '该模型不可用';
       return;
     }
+    if (r.compare) {
+      document.getElementById('md-status').textContent = 'SVR/随机森林为对比模型，暂不支持保存为生效模型（无可解析反解）';
+      return;
+    }
     const name = prompt('模型名称：', selectedType + '-' + new Date().toLocaleDateString());
     if (!name) return;
     const snapshot = {
@@ -308,6 +315,58 @@
       log_conc: document.getElementById('md-log').checked,
       zscore: document.getElementById('md-zscore').checked,
     });
+  }
+
+  function renderExplore(d) {
+    // 问题2-I：SVG 散点 + 每浓度组箱线（min/q1/med/q3/max）
+    const el = document.getElementById('md-explore-plot');
+    const W = 560, H = 240, padL = 46, padR = 12, padT = 14, padB = 30;
+    const pts = d.points || [];
+    const xs = pts.map(function (p) { return p[0]; });
+    const ys = pts.map(function (p) { return p[1]; });
+    const xmin = Math.min.apply(null, xs), xmax = Math.max.apply(null, xs);
+    const ymin = Math.min.apply(null, ys), ymax = Math.max.apply(null, ys);
+    const X = function (v) { return padL + (v - xmin) / (xmax - xmin || 1) * (W - padL - padR); };
+    const Y = function (v) { return padT + (1 - (v - ymin) / (ymax - ymin || 1)) * (H - padT - padB); };
+    let svg = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">';
+    svg += '<line x1="' + padL + '" y1="' + (H - padB) + '" x2="' + (W - padR) + '" y2="' + (H - padB) + '" stroke="#cfd8df"/>';
+    svg += '<line x1="' + padL + '" y1="' + padT + '" x2="' + padL + '" y2="' + (H - padB) + '" stroke="#cfd8df"/>';
+    svg += '<text x="' + (W / 2) + '" y="' + (H - 8) + '" font-size="11" fill="#55636f" text-anchor="middle">浓度</text>';
+    svg += '<text x="14" y="' + (H / 2) + '" font-size="11" fill="#55636f" text-anchor="middle" transform="rotate(-90 14 ' + (H / 2) + ')">特征值</text>';
+    // 箱线：每组 conc → 竖线 min/max + 箱 q1..q3 + 中位横线
+    (d.box || []).forEach(function (g) {
+      const vals = g.values.slice().sort(function (a, b) { return a - b; });
+      const q = function (pct) {
+        const pos = (vals.length - 1) * pct;
+        const lo = Math.floor(pos), hi = Math.ceil(pos);
+        return vals[lo] + (vals[hi] - vals[lo]) * (pos - lo);
+      };
+      const cx = X(g.conc);
+      const vmin = vals[0], vmax = vals[vals.length - 1], q1 = q(0.25), q3 = q(0.75), med = q(0.5);
+      svg += '<line x1="' + cx + '" y1="' + Y(vmin) + '" x2="' + cx + '" y2="' + Y(vmax) + '" stroke="#94a5b4" stroke-width="1.5"/>';
+      svg += '<rect x="' + (cx - 6) + '" y="' + Y(q3) + '" width="12" height="' + (Y(q1) - Y(q3)) + '" fill="#cfe0f2" stroke="#4a7fd4"/>';
+      svg += '<line x1="' + (cx - 8) + '" y1="' + Y(med) + '" x2="' + (cx + 8) + '" y2="' + Y(med) + '" stroke="#1d6fb8" stroke-width="2"/>';
+    });
+    // 散点
+    pts.forEach(function (p) {
+      svg += '<circle cx="' + X(p[0]).toFixed(1) + '" cy="' + Y(p[1]).toFixed(1) + '" r="3.5" fill="#e05656"/>';
+    });
+    svg += '</svg>';
+    el.innerHTML = svg;
+    el.className = '';
+    document.getElementById('md-explore-info').textContent =
+      'n=' + d.n + '，Pearson r=' + d.pearson + '（特征 ' + d.feature + '）';
+  }
+
+  async function runExplore() {
+    const el = document.getElementById('md-explore-plot');
+    document.getElementById('md-explore-info').textContent = '加载中...';
+    try {
+      const res = await global.API.post('/api/modeling/explore', { feature: curFeature });
+      renderExplore(res);
+    } catch (e) {
+      el.textContent = '探索失败：' + e.message;
+    }
   }
 
   async function runCv() {
@@ -352,6 +411,7 @@
     document.getElementById('md-fit').addEventListener('click', runFit);
     document.getElementById('md-save').addEventListener('click', saveModel);
     document.getElementById('md-cv').addEventListener('click', runCv);
+    document.getElementById('md-explore').addEventListener('click', runExplore);
     document.getElementById('md-feature').addEventListener('change', function () {
       curFeature = document.getElementById('md-feature').value;
       loadData();

@@ -9,7 +9,7 @@ import warnings
 import numpy as np
 from scipy import optimize, stats
 
-MODEL_TYPES = ['linear', 'poly2', 'exp', '4pl']
+MODEL_TYPES = ['linear', 'poly2', 'log', 'exp', '4pl', 'pls']
 
 FEATURES = [
     'hue', 'saturation', 'value', 'ratio_gr', 'ratio_bg',
@@ -41,14 +41,29 @@ def _f_4pl(x, a, b, c, d):
         return d + (a - d) / (1.0 + (x / c) ** b)
 
 
+def _f_log(x, a, b):
+    """对数回归（问题2-J）：y = a * ln(x + 1) + b（平移保证 x=0 有定义）。"""
+    return a * np.log(np.asarray(x) + 1.0) + b
+
+
+def _f_pls(x, a, b):
+    """PLSR 单分量等价于标准化线性回归：y = a*x + b（问题2-J）。"""
+    return a * np.asarray(x) + b
+
+
 FUNCS = {
     'linear': _f_linear,
     'poly2': _f_poly2,
+    'log': _f_log,
     'exp': _f_exp,
     '4pl': _f_4pl,
+    'pls': _f_pls,
 }
 
-PARAM_COUNTS = {'linear': 2, 'poly2': 3, 'exp': 3, '4pl': 4}
+PARAM_COUNTS = {'linear': 2, 'poly2': 3, 'log': 2, 'exp': 3, '4pl': 4, 'pls': 2}
+
+# 对比模型（问题2-J）：可拟合/CV 对比，不参与检测反解（无解析逆）
+COMPARE_MODEL_TYPES = ['svr', 'rf']
 
 
 # ---------- 指标 ----------
@@ -160,13 +175,20 @@ def cross_validate(x, y, model_type='linear', method='loo', k=5):
         if len(train_idx) < 2 or len(set(x[train_idx])) < 2:
             continue
         try:
-            fitted = fit_model(list(x[train_idx]), list(y[train_idx]), model_type)
-        except ValueError:
+            if model_type in COMPARE_MODEL_TYPES:
+                cf = fit_compare_model(list(x[train_idx]), list(y[train_idx]), model_type)
+                params = cf['params']
+                est = params[model_type]
+                y_pred = list(est.predict(np.asarray(list(x[test_idx]), dtype=float).reshape(-1, 1)))
+                n_params = 3
+            else:
+                fitted = fit_model(list(x[train_idx]), list(y[train_idx]), model_type)
+                params = fitted['params']
+                y_pred = FUNCS[model_type](list(x[test_idx]), **params)
+                n_params = PARAM_COUNTS[model_type]
+        except (ValueError, ImportError):
             continue
-        params = fitted['params']
-        y_pred = FUNCS[model_type](list(x[test_idx]), **params)
         y_true = list(y[test_idx])
-        n_params = PARAM_COUNTS[model_type]
         m = metrics(y_true, y_pred, n_params)
         m['n'] = len(y_true)
         fold_metrics.append(m)
@@ -283,12 +305,84 @@ def fit_4pl(x, y):
     return {'a': float(p[0]), 'b': float(p[1]), 'c': float(p[2]), 'd': float(p[3])}
 
 
+def fit_log(x, y):
+    """对数回归（问题2-J）：y = a*ln(x+1) + b。"""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    lnx = np.log(x + 1.0)
+    a, b = np.polyfit(lnx, y, 1)
+    return {'a': float(a), 'b': float(b)}
+
+
+def fit_pls(x, y):
+    """PLSR（问题2-J）：PLSRegression(n_components=1) 拟合 x→y，等价标准化线性，反解同线性。"""
+    xa = np.asarray(x, dtype=float)
+    ya = np.asarray(y, dtype=float)
+    try:
+        from sklearn.cross_decomposition import PLSRegression
+        X = xa.reshape(-1, 1)
+        pls = PLSRegression(n_components=1)
+        pls.fit(X, ya.reshape(-1, 1))
+        a = float(pls.coef_[0, 0])
+        if hasattr(pls, 'intercept_'):
+            b = float(np.asarray(pls.intercept_).ravel()[0])
+        elif hasattr(pls, 'y_mean_'):
+            b = float(pls.y_mean_[0] - a * pls.x_mean_[0])
+        else:
+            # 无截距接口：用均值中心化关系兜底
+            b = float(ya.mean() - a * xa.mean())
+        if not np.isfinite(a) or abs(a) < 1e-12:
+            raise ValueError('PLS 斜率退化')
+        return {'a': a, 'b': b}
+    except Exception as e:  # noqa: BLE001
+        if 'PLS' not in str(e):
+            # sklearn 不可用/退化 → 退化为普通最小二乘（单变量下数学等价）
+            a, b = np.polyfit(xa, ya, 1)
+            return {'a': float(a), 'b': float(b)}
+        raise
+
+
+def fit_svr(x, y):
+    """SVR 对比模型（问题2-J）：RBF 核，直接拟合特征域。"""
+    from sklearn.svm import SVR
+    X = np.asarray(x, dtype=float).reshape(-1, 1)
+    Y = np.asarray(y, dtype=float)
+    svr = SVR(kernel='rbf', C=10.0, gamma='scale', epsilon=0.02)
+    svr.fit(X, Y)
+    return {'svr': svr, 'n_support': int(np.sum(svr.n_support_))}
+
+
+def fit_rf(x, y):
+    """随机森林对比模型（问题2-J）。"""
+    from sklearn.ensemble import RandomForestRegressor
+    X = np.asarray(x, dtype=float).reshape(-1, 1)
+    Y = np.asarray(y, dtype=float)
+    rf = RandomForestRegressor(n_estimators=50, random_state=0)
+    rf.fit(X, Y)
+    return {'rf': rf, 'n_estimators': 50}
+
+
 FITTERS = {
     'linear': fit_linear,
     'poly2': fit_poly2,
+    'log': fit_log,
     'exp': fit_exp,
     '4pl': fit_4pl,
+    'pls': fit_pls,
 }
+
+COMPARE_FITTERS = {'svr': fit_svr, 'rf': fit_rf}
+
+
+def fit_compare_model(x, y, model_type):
+    """拟合对比模型（svr/rf），返回 {type, params(模型对象), r2, rmse}。"""
+    X = np.asarray(x, dtype=float).reshape(-1, 1)
+    Y = np.asarray(y, dtype=float)
+    params = COMPARE_FITTERS[model_type](x, y)
+    est = params[model_type]
+    y_pred = est.predict(X)
+    m = metrics(Y, y_pred, 3)
+    return {'type': model_type, 'params': params, **m, 'compare': True}
 
 
 def fit_model(x, y, model_type):
@@ -316,15 +410,19 @@ def _degenerate(model_type, params):
         return abs(p['a']) < 1e-12
     if model_type == 'poly2':
         return abs(p['a']) < 1e-12 and abs(p['b']) < 1e-12
+    if model_type == 'log':
+        return abs(p['a']) < 1e-12
     if model_type == 'exp':
         return abs(p['a']) < 1e-6
     if model_type == '4pl':
         return abs(p['a'] - p['d']) < 1e-6 or abs(p['b']) < 1e-9 or abs(p['c']) < 1e-9
+    if model_type == 'pls':
+        return abs(p['a']) < 1e-12
     return False
 
 
 def fit_all_models(x, y):
-    """拟合全部 4 类模型，返回 {type: result}；单模型失败/退化时记录 error。"""
+    """拟合全部主模型 + 对比模型（svr/rf），返回 {type: result}；单模型失败/退化时记录 error。"""
     results = {}
     for mt in MODEL_TYPES:
         try:
@@ -333,6 +431,11 @@ def fit_all_models(x, y):
                 r = {'type': mt, 'error': f'{mt} 模型退化（参数无预测意义），请检查数据或改用其他模型'}
             results[mt] = r
         except (ValueError, FloatingPointError) as e:
+            results[mt] = {'type': mt, 'error': str(e)}
+    for mt in COMPARE_MODEL_TYPES:
+        try:
+            results[mt] = fit_compare_model(x, y, mt)
+        except (ValueError, ImportError) as e:
             results[mt] = {'type': mt, 'error': str(e)}
     return results
 
@@ -376,6 +479,16 @@ def predict_conc(model_type, params, feature):
         if y <= bottom or y >= top:
             raise ValueError('特征值超出 4PL 范围，无法反解')
         return float(mid * ((top - bottom) / (y - bottom) - 1.0) ** (1.0 / slope))
+    if model_type == 'log':
+        if abs(p['a']) < 1e-12:
+            raise ValueError('对数模型斜率为 0，无法预测')
+        return float(np.exp((y - p['b']) / p['a']) - 1.0)
+    if model_type == 'pls':
+        if abs(p['a']) < 1e-12:
+            raise ValueError('PLS 模型斜率为 0，无法预测')
+        return float((y - p['b']) / p['a'])
+    if model_type in COMPARE_MODEL_TYPES:
+        raise ValueError(f'{model_type} 为对比模型，暂不支持浓度反解')
     raise ValueError(f'未知模型类型：{model_type}')
 
 

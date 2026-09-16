@@ -341,8 +341,10 @@ def fit_calibration():
     best = modeling.best_model(results)
     xmin, xmax = min(xs), max(xs)
     for mt, r in results.items():
-        if 'error' not in r:
+        if 'error' not in r and not r.get('compare'):
             r['curve'] = modeling.curve_points(mt, r['params'], xmin, xmax)
+        elif r.get('compare') and 'params' in r:
+            r['params'] = {k: v for k, v in r['params'].items() if not hasattr(v, 'predict')}
     return jsonify({
         'ok': True,
         'feature': feature,
@@ -379,6 +381,38 @@ def modeling_preprocess():
     return jsonify({'ok': True, **d})
 
 
+@bp.route('/modeling/explore', methods=['POST'])
+def modeling_explore():
+    """数据探索（问题2-I）：散点数据、浓度组分箱线数据、特征-浓度 Pearson 相关。"""
+    body = request.get_json(silent=True) or {}
+    feature = body.get('feature', 'hue')
+    if feature not in modeling.FEATURES:
+        imported = db.query_one(_db_path(),
+                                "SELECT 1 FROM calibration_points WHERE source='import' AND feature_name=? LIMIT 1",
+                                (feature,))
+        if not imported:
+            return jsonify({'error': f'不支持的特征：{feature}'}), 400
+    xs, ys, _ = _collect_calibration_data(feature)
+    if len(xs) < 3:
+        return jsonify({'error': '有效标定点不足'}), 400
+    prep = _preprocess_settings()
+    xs_p, ys_p, _ = modeling.preprocess_data(xs, ys, log_conc=prep['log_conc'],
+                                             zscore=prep['zscore'], iqr=prep['iqr'])
+    pearson = 0.0
+    try:
+        import numpy as _np
+        pearson = round(float(_np.corrcoef(xs_p, ys_p)[0, 1]), 4) if len(xs_p) > 1 else 0.0
+    except Exception:  # noqa: BLE001
+        pearson = 0.0
+    by_conc = {}
+    for xi, yi in zip(xs, ys):
+        by_conc.setdefault(round(float(xi), 4), []).append(round(float(yi), 4))
+    box = [{'conc': c, 'values': v} for c, v in sorted(by_conc.items())]
+    return jsonify({'ok': True, 'feature': feature,
+                    'points': [[round(x, 4), round(y, 4)] for x, y in zip(xs, ys)],
+                    'box': box, 'pearson': pearson, 'n': len(xs)})
+
+
 @bp.route('/modeling/cv', methods=['POST'])
 def modeling_cv():
     """交叉验证（问题2-H）：loo / kfold / leave_group，对全部模型输出 R²/RMSE/MAE。"""
@@ -406,7 +440,7 @@ def modeling_cv():
     prep_meta['log_conc'] = bool(prep['log_conc'])
     prep_meta['zscore'] = bool(prep['zscore'])
     out = {}
-    for mt in modeling.MODEL_TYPES:
+    for mt in modeling.MODEL_TYPES + modeling.COMPARE_MODEL_TYPES:
         try:
             out[mt] = modeling.cross_validate(xs, ys, mt, method, k)
         except ValueError as e:

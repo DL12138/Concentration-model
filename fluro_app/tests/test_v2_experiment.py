@@ -585,3 +585,92 @@ def test_p2h_fit_with_log_conc_and_detect_inverse(client):
     det = client.post(f'/api/detect/{iid}', json={}).get_json()
     assert det['ok'] is True
     assert abs(det['detection']['conc'] - (10 ** 0.3 - 1)) < 0.2
+
+
+# ============ 问题 2-I/2-J：探索可视化 + 模型扩展（log/PLSR/SVR/RF） ============
+
+def test_p2j_fit_all_model_types(client):
+    """拟合输出覆盖 6 个主模型 + SVR/随机森林对比模型。"""
+    rows = [(0, 1.0), (1, 0.91), (2, 0.82), (5, 0.55), (10, 0.1)]
+    data = {'file': (_make_calib_csv(rows), 'cal.csv'),
+            'conc_col': 'concentration', 'feature_col': 'T_R_over_Bg_R'}
+    client.post('/api/modeling/import', data=data, content_type='multipart/form-data')
+    fit = client.post('/api/calibration/fit', json={'feature': 'T_R_over_Bg_R'}).get_json()
+    for mt in ('linear', 'poly2', 'log', 'exp', '4pl', 'pls'):
+        assert mt in fit['results']
+    assert fit['results']['svr']['compare'] is True
+    assert fit['results']['rf']['compare'] is True
+    assert fit['results']['svr']['r2'] is not None
+
+
+def test_p2j_log_model_save_and_detect(client):
+    """对数回归保存为生效模型，检测反解正确（对数反函数）。"""
+    rows = [(0, 0.0), (1, 0.301), (2, 0.477), (5, 0.778), (9, 1.0)]  # feat = log10(c+1)
+    data = {'file': (_make_calib_csv(rows), 'cal.csv'),
+            'conc_col': 'concentration', 'feature_col': 'T_R_over_Bg_R'}
+    client.post('/api/modeling/import', data=data, content_type='multipart/form-data')
+    client.post('/api/modeling/preprocess', json={'log_conc': False, 'zscore': False, 'iqr': False})
+    fit = client.post('/api/calibration/fit', json={'feature': 'T_R_over_Bg_R'}).get_json()
+    logm = fit['results']['log']
+    assert logm['r2'] > 0.95
+    mid = client.post('/api/models', json={
+        'name': 'log模型', 'type': 'log', 'params': logm['params'],
+        'metrics': {'r2': logm['r2'], 'rmse': logm['rmse'], 'lod': logm.get('lod')},
+        'source_snapshot': {'feature': 'T_R_over_Bg_R', 'data': fit['data'], 'n': fit['n'],
+                            'preprocess': fit['preprocess']},
+    }).get_json()['id']
+    client.post(f'/api/models/{mid}/activate')
+    iid = _upload_img(client)
+    client.post(f'/api/images/{iid}/rois', json={'rois': ROIS_T_BG})
+    client.post(f'/api/images/{iid}/features', json={})
+    from app import database as _db
+    dbp = Path(client.application.config['DATA_DIR']) / 'fluro.db'
+    _db.execute(dbp, 'UPDATE roi_features SET features_json=? WHERE image_id=? AND roi_name=?',
+                (json.dumps({'mean_r': 10, 'mean_g': 60, 'mean_b': 100, 'hue': 90,
+                             'od_r': 1.0, 'od_g': 0.6, 'od_b': 0.4}), iid, 'T'))
+    _db.execute(dbp, 'UPDATE roi_features SET features_json=? WHERE image_id=? AND roi_name=?',
+                (json.dumps({'mean_r': 100, 'mean_g': 100, 'mean_b': 100}), iid, 'Bg'))
+    # feat = 10/100 = 0.1 → c = 10^0.1 - 1 ≈ 0.2589
+    det = client.post(f'/api/detect/{iid}', json={}).get_json()
+    assert det['ok'] is True
+    assert abs(det['detection']['conc'] - (10 ** 0.1 - 1)) < 0.15
+
+
+def test_p2i_explore_scatter_box(client):
+    """数据探索：散点、分浓度箱线、Pearson 相关。"""
+    rows = [(0, 1.0), (0, 0.98), (1, 0.91), (1, 0.9), (2, 0.82), (2, 0.83), (5, 0.55), (10, 0.1)]
+    data = {'file': (_make_calib_csv(rows), 'cal.csv'),
+            'conc_col': 'concentration', 'feature_col': 'T_R_over_Bg_R'}
+    client.post('/api/modeling/import', data=data, content_type='multipart/form-data')
+    r = client.post('/api/modeling/explore', json={'feature': 'T_R_over_Bg_R'})
+    assert r.status_code == 200
+    d = r.get_json()
+    assert len(d['points']) == 8
+    assert len(d['box']) == 5
+    assert abs(d['pearson']) > 0.9
+    # 箱线组含重复值
+    assert len(d['box'][0]['values']) == 2
+
+
+def test_p2h_cv_covers_compare_models(client):
+    """交叉验证覆盖 svr/rf 对比模型。"""
+    rows = [(0, 1.0), (1, 0.91), (2, 0.82), (5, 0.55), (10, 0.1)]
+    data = {'file': (_make_calib_csv(rows), 'cal.csv'),
+            'conc_col': 'concentration', 'feature_col': 'T_R_over_Bg_R'}
+    client.post('/api/modeling/import', data=data, content_type='multipart/form-data')
+    r = client.post('/api/modeling/cv', json={'feature': 'T_R_over_Bg_R', 'method': 'loo'})
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d['results']['svr']['summary']['r2'] is not None
+    assert d['results']['rf']['summary']['n_folds'] > 0
+
+
+def test_p2j_compare_models_cannot_save(client):
+    """SVR/随机森林不可保存为生效模型。"""
+    rows = [(0, 1.0), (1, 0.91), (2, 0.82), (5, 0.55), (10, 0.1)]
+    data = {'file': (_make_calib_csv(rows), 'cal.csv'),
+            'conc_col': 'concentration', 'feature_col': 'T_R_over_Bg_R'}
+    client.post('/api/modeling/import', data=data, content_type='multipart/form-data')
+    r = client.post('/api/models', json={'name': 'svr', 'type': 'svr',
+                                         'params': {'svr': 'x'}, 'metrics': {}})
+    assert r.status_code == 400
