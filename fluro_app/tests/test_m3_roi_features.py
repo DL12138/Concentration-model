@@ -147,10 +147,27 @@ def test_auto_roi_api_uses_active_template(client):
     assert roi['source'] == 'auto'
 
 
-def test_auto_roi_without_template_errors(client):
+def test_auto_roi_without_template_auto_detects(client):
+    """无模板时不再报错：基于图像内容自动识别检测区（合成图亮区）。"""
     iid = _upload(client)
     resp = client.post(f'/api/pipeline/{iid}/roi/auto', json={})
+    assert resp.status_code == 200
+    roi = resp.get_json()['roi']
+    assert roi['source'] == 'auto'
+    cx = roi['x'] + roi['w'] / 2
+    cy = roi['y'] + roi['h'] / 2
+    assert 0.42 <= cx <= 0.58 and 0.42 <= cy <= 0.58
+
+
+def test_auto_roi_no_detectable_region_errors(client):
+    """无模板且图像无亮/饱和检测区时返回 400。"""
+    img = np.full((300, 400, 3), 90, dtype=np.uint8)
+    ok, buf = cv2.imencode('.png', img[:, :, ::-1])
+    data = {'files': [(io.BytesIO(buf.tobytes()), 't.png')], 'kind': 'detection'}
+    iid = client.post('/api/images/upload', data=data, content_type='multipart/form-data').get_json()['images'][0]['id']
+    resp = client.post(f'/api/pipeline/{iid}/roi/auto', json={})
     assert resp.status_code == 400
+    assert '自动识别' in resp.get_json()['error']
 
 
 def test_manual_roi_save_and_get(client):

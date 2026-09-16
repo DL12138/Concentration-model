@@ -96,6 +96,9 @@ MIGRATIONS = [
     (2, [
         """ALTER TABLE roi_templates ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0""",
     ]),
+    (3, [
+        """ALTER TABLE roi ADD COLUMN bg_subtract INTEGER NOT NULL DEFAULT 0""",
+    ]),
 ]
 
 

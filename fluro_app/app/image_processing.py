@@ -124,6 +124,80 @@ def extract_features(img_rgb, roi):
     }
 
 
+def auto_detect_roi(img_rgb, margin_frac=0.06):
+    """基于内容自动识别检测区：取亮/饱和（荧光）像素的最大连通域外接矩形。
+
+    返回归一化 (x,y,w,h)；找不到明显检测区返回 None。
+    """
+    h, w = img_rgb.shape[:2]
+    if h == 0 or w == 0:
+        return None
+    hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
+    s = hsv[:, :, 1].astype(np.float32)
+    v = hsv[:, :, 2].astype(np.float32)
+    mask = ((s > 40) & (v > 50)).astype(np.uint8)
+    k = max(3, min(31, (int(min(h, w) * 0.02) | 1)))
+    kernel = np.ones((k, k), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not cnts:
+        return None
+    best = max(cnts, key=cv2.contourArea)
+    x0, y0, bw, bh = cv2.boundingRect(best)
+    if bw * bh < h * w * 0.001:
+        return None
+    mx, my = int(margin_frac * bw), int(margin_frac * bh)
+    x0 = max(0, x0 - mx)
+    y0 = max(0, y0 - my)
+    x1 = min(w, x0 + bw + 2 * mx)
+    y1 = min(h, y0 + bh + 2 * my)
+    return (x0 / w, y0 / h, (x1 - x0) / w, (y1 - y0) / h)
+
+
+def bg_ring_mean(img_rgb, roi, expand=0.25):
+    """背景环均值：ROI 外扩 expand 比例的环形区域 RGB 均值（用于背景扣除）。"""
+    h, w = img_rgb.shape[:2]
+    x0, y0, x1, y1 = roi_to_pixels(roi, img_rgb.shape)
+    bw, bh = x1 - x0, y1 - y0
+    if bw <= 0 or bh <= 0:
+        raise ValueError('ROI 为空')
+    ex0 = max(0, int(x0 - bw * expand))
+    ey0 = max(0, int(y0 - bh * expand))
+    ex1 = min(w, int(x1 + bw * expand))
+    ey1 = min(h, int(y1 + bh * expand))
+    if ex1 <= ex0 or ey1 <= ey0:
+        raise ValueError('背景环为空')
+    ox, oy = np.meshgrid(np.arange(ex0, ex1), np.arange(ey0, ey1))
+    inner = (ox >= x0) & (ox < x1) & (oy >= y0) & (oy < y1)
+    ring = img_rgb[ey0:ey1, ex0:ex1][~inner]
+    if ring.size == 0:
+        raise ValueError('背景环为空')
+    return ring.reshape(-1, 3).mean(axis=0)
+
+
+def apply_bg_subtraction(feats, bg_rgb):
+    """背景扣除：从特征均值中减去背景环均值，并重算派生指标（色相/饱和度/明度/比值）。"""
+    nr = max(0.0, float(feats['mean_r']) - float(bg_rgb[0]))
+    ng = max(0.0, float(feats['mean_g']) - float(bg_rgb[1]))
+    nb = max(0.0, float(feats['mean_b']) - float(bg_rgb[2]))
+    px = np.clip([nr, ng, nb], 0, 255).astype(np.uint8).reshape(1, 1, 3)
+    h, s, v = cv2.cvtColor(px, cv2.COLOR_RGB2HSV)[0, 0]
+    out = dict(feats)
+    out.update({
+        'mean_r': round(nr, 3),
+        'mean_g': round(ng, 3),
+        'mean_b': round(nb, 3),
+        'hue': round(float(h), 3),
+        'saturation': round(float(s), 3),
+        'value': round(float(v), 3),
+        'ratio_gr': round(ng / (nr + 1e-6), 4),
+        'ratio_bg': round(nb / (ng + 1e-6), 4),
+        'intensity': round(float(v), 3),
+    })
+    return out
+
+
 def auto_roi(img_rgb, template_roi, ref_img_rgb=None, margin_px=40):
     """用模板 ROI 自动定位：固定机位直接映射；有参考图时用模板匹配微调。
 

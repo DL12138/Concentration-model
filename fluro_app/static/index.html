@@ -142,9 +142,11 @@
             <button id="roi-save" class="btn primary">保存修正</button>
             <button id="roi-save-tpl" class="btn">存为模板</button>
             <label>模板：<select id="roi-tpl-select"></select></label>
+            <label><input type="checkbox" id="roi-bg"> 背景扣除</label>
           </div>
           <div id="roi-status" class="status-line"></div>
           <div class="roi-canvas-wrap"><canvas id="roi-canvas" width="640" height="480"></canvas></div>
+          <div class="result-imgs"><figure><img id="roi-overlay" alt="修正后图（ROI 标注）"><figcaption>修正后图（ROI 标注）</figcaption></figure></div>
         </div>
         <!-- 步骤 4：特征提取 -->
         <div class="wf-panel" id="wf-panel-4" style="display:none;">

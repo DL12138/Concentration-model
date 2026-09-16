@@ -86,7 +86,11 @@ def test_p1_roi_crop_and_avg(client):
 
 
 def test_p1_roi_crop_without_roi_404(client):
-    iid = _upload(client)
+    # 纯灰图（无亮/饱和检测区）：自动识别失败，无 ROI → crop/avg 返回 404
+    img = np.full((300, 400, 3), 90, dtype=np.uint8)
+    ok, buf = cv2.imencode('.png', img[:, :, ::-1])
+    data = {'files': [(io.BytesIO(buf.tobytes()), 't.png')], 'kind': 'detection'}
+    iid = client.post('/api/images/upload', data=data, content_type='multipart/form-data').get_json()['images'][0]['id']
     client.post('/api/pipeline/run', json={'image_ids': [iid]})
     assert client.get(f'/api/images/{iid}/roi_crop').status_code == 404
     assert client.get(f'/api/images/{iid}/roi_avg').status_code == 404
@@ -176,3 +180,46 @@ def test_p3_ref_changes_processed_image(client):
 
     diff = np.abs(before.astype(int) - after.astype(int))
     assert diff.mean() > 0.5, '暗场校正未改变处理结果（无前后对比差异）'
+
+
+# ============ 问题 4：ROI 自动识别 + 修正图 + 背景扣除 ============
+
+def test_p4_auto_detect_without_template(client):
+    """无模板时基于图像内容自动识别检测区（不强制人工框选）。"""
+    iid = _upload(client, conc=50)
+    res = client.post('/api/pipeline/run', json={'image_ids': [iid]}).get_json()
+    assert res['results'][0]['steps']['roi'] == 'ok'
+    roi = client.get(f'/api/pipeline/{iid}/roi').get_json()['roi']
+    assert roi and roi['source'] == 'auto'
+    # ROI 应覆盖合成图检测圆（圆心约在 (0.5, 0.5)）
+    cx = roi['x'] + roi['w'] / 2
+    cy = roi['y'] + roi['h'] / 2
+    assert 0.42 <= cx <= 0.58 and 0.42 <= cy <= 0.58
+
+
+def test_p4_roi_bg_subtract_field(client):
+    iid = _upload(client, conc=50)
+    _pipeline(client, [iid])
+    r = client.post(f'/api/pipeline/{iid}/roi', json=dict(TEMPLATE, source='manual', bg_subtract=1))
+    assert r.get_json()['roi']['bg_subtract'] == 1
+    roi = client.get(f'/api/pipeline/{iid}/roi').get_json()['roi']
+    assert roi['bg_subtract'] == 1
+
+
+def test_p4_bg_subtraction_changes_features(client):
+    """开启背景扣除后特征均值应低于未扣除（合成图背景暗于检测区）。"""
+    iid = _upload(client, conc=100)  # 红色亮区
+    _pipeline(client, [iid])
+    base = client.get(f'/api/pipeline/{iid}/features').get_json()['features']
+    client.post(f'/api/pipeline/{iid}/roi', json=dict(TEMPLATE, source='manual', bg_subtract=1))
+    sub = client.get(f'/api/pipeline/{iid}/features').get_json()['features']
+    for key in ('mean_r', 'mean_g', 'mean_b'):
+        assert sub[key] <= base[key] + 1e-6, f'{key} 背景扣除后未下降'
+
+
+def test_p4_overlay_shows_after_manual_save(client):
+    """手动修正保存后，overlay（修正后图）接口可访问。"""
+    iid = _upload(client, conc=50)
+    _pipeline(client, [iid])
+    client.post(f'/api/pipeline/{iid}/roi', json=dict(TEMPLATE, source='manual', bg_subtract=0))
+    assert client.get(f'/api/images/{iid}/overlay').status_code == 200

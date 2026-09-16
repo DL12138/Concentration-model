@@ -14,7 +14,8 @@ from flask import Blueprint, current_app, jsonify, request, send_file, abort
 from .. import database as db
 from ..image_processing import (read_image, make_thumbnail, preprocess,
                                 extract_features, auto_roi,
-                                roi_to_pixels, crop_roi)
+                                roi_to_pixels, crop_roi,
+                                auto_detect_roi, bg_ring_mean, apply_bg_subtraction)
 
 bp = Blueprint('workflow', __name__, url_prefix='/api')
 
@@ -476,23 +477,24 @@ def save_roi(image_id):
     source = body.get('source', 'manual')
     if source not in ('auto', 'manual'):
         source = 'manual'
+    bg_subtract = 1 if body.get('bg_subtract') else 0
 
     existing = db.query_one(_db_path(), 'SELECT id FROM roi WHERE image_id=?', (image_id,))
     if existing:
         db.execute(_db_path(),
-                   'UPDATE roi SET x=?, y=?, w=?, h=?, source=?, updated_at=datetime(\'now\',\'localtime\') WHERE id=?',
-                   (x, y, w, h, source, existing['id']))
+                   'UPDATE roi SET x=?, y=?, w=?, h=?, source=?, bg_subtract=?, updated_at=datetime(\'now\',\'localtime\') WHERE id=?',
+                   (x, y, w, h, source, bg_subtract, existing['id']))
     else:
         db.execute(_db_path(),
-                   'INSERT INTO roi (image_id, x, y, w, h, source) VALUES (?,?,?,?,?,?)',
-                   (image_id, x, y, w, h, source))
-    _upsert_step(image_id, 'roi', json.dumps({'x': x, 'y': y, 'w': w, 'h': h, 'source': source}, ensure_ascii=False), 'ok')
+                   'INSERT INTO roi (image_id, x, y, w, h, source, bg_subtract) VALUES (?,?,?,?,?,?,?)',
+                   (image_id, x, y, w, h, source, bg_subtract))
+    _upsert_step(image_id, 'roi', json.dumps({'x': x, 'y': y, 'w': w, 'h': h, 'source': source, 'bg_subtract': bg_subtract}, ensure_ascii=False), 'ok')
 
     # 级联：ROI 变更后重算特征与结果
     from .api_model import recompute_downstream
     recompute_downstream(image_id)
 
-    return jsonify({'ok': True, 'roi': {'x': x, 'y': y, 'w': w, 'h': h, 'source': source}})
+    return jsonify({'ok': True, 'roi': {'x': x, 'y': y, 'w': w, 'h': h, 'source': source, 'bg_subtract': bg_subtract}})
 
 
 @bp.route('/pipeline/<int:image_id>/roi/auto', methods=['POST'])
@@ -508,37 +510,44 @@ def auto_roi_image(image_id):
 
 
 def auto_roi_core(image_id):
-    """ROI 自动套用核心。无图抛 KeyError；无模板抛 ValueError。"""
+    """ROI 自动套用核心。无图抛 KeyError；找不到检测区抛 ValueError。
+
+    有激活模板 → 模板映射/匹配微调；无模板 → 基于图像内容的自动识别。
+    """
     row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
     if not row:
         raise KeyError(image_id)
-    tpl = _active_template()
-    if not tpl:
-        raise ValueError('尚未创建 ROI 模板，请先在参考图上框选并保存为模板')
     img = _source_image(row)
     if img is None:
         raise ValueError('图像无法读取')
-    ref_img = None
-    if tpl.get('ref_image_id'):
-        ref_row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (tpl['ref_image_id'],))
-        if ref_row:
-            ref_img = read_image(ref_row['file_path'])
-    roi = auto_roi(img, (tpl['x'], tpl['y'], tpl['w'], tpl['h']), ref_img_rgb=ref_img)
+    tpl = _active_template()
+    if tpl:
+        ref_img = None
+        if tpl.get('ref_image_id'):
+            ref_row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (tpl['ref_image_id'],))
+            if ref_row:
+                ref_img = read_image(ref_row['file_path'])
+        roi = auto_roi(img, (tpl['x'], tpl['y'], tpl['w'], tpl['h']), ref_img_rgb=ref_img)
+    else:
+        roi = auto_detect_roi(img)
+        if roi is None:
+            raise ValueError('自动识别未找到明显检测区，请手动框选')
 
     existing = db.query_one(_db_path(), 'SELECT id FROM roi WHERE image_id=?', (image_id,))
+    bg = existing['bg_subtract'] if existing else 0
     if existing:
         db.execute(_db_path(),
                    'UPDATE roi SET x=?, y=?, w=?, h=?, source=?, updated_at=datetime(\'now\',\'localtime\') WHERE id=?',
                    (roi[0], roi[1], roi[2], roi[3], 'auto', existing['id']))
     else:
         db.execute(_db_path(),
-                   'INSERT INTO roi (image_id, x, y, w, h, source) VALUES (?,?,?,?,?,?)',
-                   (image_id, roi[0], roi[1], roi[2], roi[3], 'auto'))
-    _upsert_step(image_id, 'roi', json.dumps({'x': roi[0], 'y': roi[1], 'w': roi[2], 'h': roi[3], 'source': 'auto'}, ensure_ascii=False), 'ok')
+                   'INSERT INTO roi (image_id, x, y, w, h, source, bg_subtract) VALUES (?,?,?,?,?,?,?)',
+                   (image_id, roi[0], roi[1], roi[2], roi[3], 'auto', 0))
+    _upsert_step(image_id, 'roi', json.dumps({'x': roi[0], 'y': roi[1], 'w': roi[2], 'h': roi[3], 'source': 'auto', 'bg_subtract': bg}, ensure_ascii=False), 'ok')
 
     from .api_model import recompute_downstream
     recompute_downstream(image_id)
-    return {'x': roi[0], 'y': roi[1], 'w': roi[2], 'h': roi[3], 'source': 'auto'}
+    return {'x': roi[0], 'y': roi[1], 'w': roi[2], 'h': roi[3], 'source': 'auto', 'bg_subtract': bg}
 
 
 def compute_features_core(image_id):
@@ -552,7 +561,11 @@ def compute_features_core(image_id):
     img = _source_image(row)
     if img is None:
         raise ValueError('图像无法读取')
-    feats = extract_features(img, (roi_row['x'], roi_row['y'], roi_row['w'], roi_row['h']))
+    roi_rect = (roi_row['x'], roi_row['y'], roi_row['w'], roi_row['h'])
+    feats = extract_features(img, roi_rect)
+    if roi_row.get('bg_subtract'):
+        bg = bg_ring_mean(img, roi_rect)
+        feats = apply_bg_subtraction(feats, bg)
 
     db.execute(_db_path(),
                'INSERT INTO features (image_id, mean_r, mean_g, mean_b, hue, saturation, value, '

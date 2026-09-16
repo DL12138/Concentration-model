@@ -238,6 +238,18 @@
     ensureRoiEditor();
     try {
       const roiRes = await global.API.get('/api/pipeline/' + currentImageId + '/roi');
+      // 背景扣除开关状态与修正后图
+      const bgBox = document.getElementById('roi-bg');
+      if (bgBox) bgBox.checked = !!(roiRes.roi && roiRes.roi.bg_subtract);
+      const roiOv = document.getElementById('roi-overlay');
+      if (roiOv) {
+        if (roiRes.roi) {
+          roiOv.src = '/api/images/' + currentImageId + '/overlay?t=' + Date.now();
+          roiOv.closest('div').style.display = '';
+        } else {
+          roiOv.closest('div').style.display = 'none';
+        }
+      }
       // 编辑器底图用处理后图（选中图时已自动预处理）；无处理图则回退原图
       const imgUrl = '/api/images/' + currentImageId + '/processed?t=' + Date.now();
       const im = new Image();
@@ -266,12 +278,20 @@
     try {
       const res = await global.API.post('/api/pipeline/' + currentImageId + '/roi/auto', {});
       ensureRoiEditor().setRoi(res.roi);
-      status.textContent = '已自动套用模板：' + JSON.stringify(res.roi);
+      status.textContent = '已自动识别检测区：' + JSON.stringify(res.roi);
       status.className = 'status-line';
+      refreshRoiOverlay();
     } catch (e) {
       status.textContent = '自动套用失败：' + e.message;
       status.className = 'status-line err';
     }
+  }
+
+  function refreshRoiOverlay() {
+    const ov = document.getElementById('roi-overlay');
+    if (!ov || !currentImageId) return;
+    ov.src = '/api/images/' + currentImageId + '/overlay?t=' + Date.now();
+    ov.closest('div').style.display = '';
   }
 
   async function saveRoiManual() {
@@ -285,9 +305,13 @@
     }
     status.textContent = '保存中...';
     try {
-      await global.API.post('/api/pipeline/' + currentImageId + '/roi', Object.assign({}, roi, { source: 'manual' }));
+      await global.API.post('/api/pipeline/' + currentImageId + '/roi', Object.assign({}, roi, {
+        source: 'manual',
+        bg_subtract: document.getElementById('roi-bg').checked ? 1 : 0,
+      }));
       status.textContent = 'ROI 已保存，特征已级联重算';
       status.className = 'status-line';
+      refreshRoiOverlay();
       showWfPanel(4);
     } catch (e) {
       status.textContent = '保存失败：' + e.message;
