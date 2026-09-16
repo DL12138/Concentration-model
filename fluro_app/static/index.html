@@ -287,6 +287,21 @@
             <div id="md-saved"></div>
             <h3 style="margin-top:16px;">交叉验证结果（问题2-H）</h3>
             <div id="md-cv-box" class="hint">点击「交叉验证」查看各模型 R² / RMSE / MAE。</div>
+            <h3 style="margin-top:16px;">模型文件（问题2-K）</h3>
+            <div class="form-row">
+              <button id="md-export-file" class="btn small">导出当前模型 .joblib</button>
+              <label class="btn small file-label">导入 .joblib
+                <input type="file" id="md-import-file" accept=".joblib" hidden></label>
+              <span id="md-file-status" class="status-line" style="margin:0;"></span>
+            </div>
+            <h3 style="margin-top:16px;">特征 CSV 批量预测（问题2-K）</h3>
+            <div class="form-row">
+              <label class="btn small file-label">选择特征 CSV
+                <input type="file" id="md-predict-csv" accept=".csv" hidden></label>
+              <button id="md-predict-csv-export" class="btn small">预测并导出 CSV</button>
+              <span id="md-predict-status" class="status-line" style="margin:0;"></span>
+            </div>
+            <div id="md-predict-out" class="hint">CSV 需包含生效模型的特征列（列名见已保存模型）。</div>
           </div>
           <div class="card" id="md-explore-card">
             <h3>数据探索（浓度 vs 特征）

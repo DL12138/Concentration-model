@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """标定建模 API（M5）：浓度分组、数据点纳入/剔除、多模型拟合、模型库管理。"""
+import csv
+import io
 import json
 from pathlib import Path
 
-from flask import Blueprint, current_app, jsonify, request, abort
+from flask import Blueprint, current_app, jsonify, request, abort, send_file
 
 from .. import database as db
 from .. import modeling
@@ -506,6 +508,152 @@ def delete_model(mid):
 @bp.route('/models/<int:mid>/delete', methods=['POST'])
 def delete_model_alias(mid):
     return delete_model(mid)
+
+
+@bp.route('/models/<int:mid>/export', methods=['GET'])
+def export_model_file(mid):
+    """导出模型为 .joblib 文件（问题2-K）。
+
+    文件内含 {name, type, params, metrics, source_snapshot}，可在另一台电脑导入复用。
+    """
+    row = db.query_one(_db_path(), 'SELECT * FROM models WHERE id=?', (mid,))
+    if not row:
+        abort(404)
+    try:
+        import joblib
+    except ImportError:
+        return jsonify({'error': '缺少 joblib，请执行 pip install joblib'}), 500
+    payload = {
+        'name': row['name'],
+        'type': row['type'],
+        'params': json.loads(row['params_json'] or '{}'),
+        'metrics': json.loads(row['metrics_json'] or '{}'),
+        'source_snapshot': json.loads(row['source_snapshot_json'] or '{}'),
+    }
+    buf = io.BytesIO()
+    joblib.dump(payload, buf)
+    buf.seek(0)
+    fname = row['name'].replace('/', '_').replace('\\', '_') + '.joblib'
+    return send_file(buf, as_attachment=True, download_name=fname, mimetype='application/octet-stream')
+
+
+@bp.route('/models/import_joblib', methods=['POST'])
+def import_model_file():
+    """导入 .joblib 模型文件（问题2-K）。"""
+    up = request.files.get('file')
+    if not up or not up.filename:
+        return jsonify({'error': '请选择 .joblib 模型文件'}), 400
+    try:
+        import joblib
+        payload = joblib.load(up.stream)
+    except Exception as e:  # noqa: BLE001
+        return jsonify({'error': f'模型文件解析失败：{e}'}), 400
+    mtype = payload.get('type')
+    if mtype not in modeling.MODEL_TYPES:
+        return jsonify({'error': f'文件中的模型类型不可作为生效模型：{mtype}'}), 400
+    if not isinstance(payload.get('params'), dict):
+        return jsonify({'error': '文件缺少 params'}), 400
+    name = (payload.get('name') or '').strip() or f'{mtype}-import'
+    mid = db.execute(_db_path(),
+                     'INSERT INTO models (name, type, params_json, metrics_json, source_snapshot_json) '
+                     'VALUES (?,?,?,?,?)',
+                     (name, mtype, json.dumps(payload['params'], ensure_ascii=False),
+                      json.dumps(payload.get('metrics') or {}, ensure_ascii=False),
+                      json.dumps(payload.get('source_snapshot') or {}, ensure_ascii=False)))
+    if not db.query_one(_db_path(), 'SELECT id FROM models WHERE is_active=1 LIMIT 1'):
+        db.execute(_db_path(), 'UPDATE models SET is_active=1 WHERE id=?', (mid,))
+    return jsonify({'ok': True, 'id': mid, 'name': name, 'type': mtype})
+
+
+def _predict_from_value(fval, model):
+    """按生效模型快照反解浓度 C±U（与 run_detection 同口径）。"""
+    params = json.loads(model['params_json'] or '{}')
+    snap = json.loads(model['source_snapshot_json'] or '{}')
+    data = snap.get('data') or []
+    if len(data) < 3:
+        raise ValueError('生效模型缺少标定数据快照，无法计算不确定度；请重新标定')
+    xs = [float(d[0]) for d in data]
+    ys = [float(d[1]) for d in data]
+    prep = snap.get('preprocess') or {}
+    fval_d = float(fval)
+    if prep.get('y_std'):
+        fval_d = (fval_d - prep['y_mean']) / prep['y_std']
+    res = modeling.predict_with_u(model['type'], params, fval_d, xs, ys)
+    if prep.get('log_conc'):
+        import math
+        res['conc'] = max(10.0 ** res['conc'] - 1.0, 0.0)
+        res['u'] = res['u'] * math.log(10.0) * (res['conc'] + 1.0)
+    return res, snap
+
+
+@bp.route('/modeling/predict_csv', methods=['POST'])
+def predict_csv():
+    """特征 CSV 批量预测（问题2-K）：CSV 需含生效模型的特征列，逐行输出 C±U。"""
+    model = db.query_one(_db_path(), 'SELECT * FROM models WHERE is_active=1 ORDER BY id DESC LIMIT 1')
+    if not model:
+        return jsonify({'error': '尚未保存生效标定模型'}), 400
+    up = request.files.get('file')
+    if not up or not up.filename:
+        return jsonify({'error': '请选择特征 CSV 文件'}), 400
+    if not up.filename.lower().endswith('.csv'):
+        return jsonify({'error': '仅支持 .csv'}), 400
+    try:
+        text = up.stream.read().decode('utf-8-sig')
+        rows = list(csv.DictReader(io.StringIO(text)))
+    except Exception as e:  # noqa: BLE001
+        return jsonify({'error': f'CSV 解析失败：{e}'}), 400
+    if not rows:
+        return jsonify({'error': 'CSV 无数据行'}), 400
+    snap = json.loads(model['source_snapshot_json'] or '{}')
+    feature = snap.get('feature', 'hue')
+    if not rows[0].get(feature):
+        return jsonify({'error': f'CSV 缺少特征列“{feature}”（模型使用该特征）'}), 400
+    lower = _num_setting('limit_lower')
+    upper = _num_setting('limit_upper')
+    out = []
+    for i, r in enumerate(rows):
+        try:
+            val = float(r[feature])
+            res, _ = _predict_from_value(val, model)
+            status = _judge(res['conc'], res['u'], lower, upper)
+            out.append({'row': i + 1, 'feature_value': round(val, 6),
+                        'conc': res['conc'], 'u': res['u'], 'status': status})
+        except (ValueError, KeyError) as e:
+            out.append({'row': i + 1, 'feature_value': r.get(feature), 'error': str(e)})
+    return jsonify({'ok': True, 'feature': feature, 'model': model['name'], 'predictions': out})
+
+
+@bp.route('/modeling/predict_csv/export', methods=['POST'])
+def predict_csv_export():
+    """特征 CSV 批量预测并直接下载结果 CSV（问题2-K）。"""
+    model = db.query_one(_db_path(), 'SELECT * FROM models WHERE is_active=1 ORDER BY id DESC LIMIT 1')
+    if not model:
+        return jsonify({'error': '尚未保存生效标定模型'}), 400
+    up = request.files.get('file')
+    if not up:
+        return jsonify({'error': '请选择特征 CSV 文件'}), 400
+    text = up.stream.read().decode('utf-8-sig')
+    reader = list(csv.DictReader(io.StringIO(text)))
+    if not reader:
+        return jsonify({'error': 'CSV 无数据行'}), 400
+    snap = json.loads(model['source_snapshot_json'] or '{}')
+    feature = snap.get('feature', 'hue')
+    lower = _num_setting('limit_lower')
+    upper = _num_setting('limit_upper')
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(['row', 'feature_value', 'predicted_conc', 'uncertainty_u', 'status'])
+    for i, r in enumerate(reader):
+        try:
+            val = float(r[feature])
+            res, _ = _predict_from_value(val, model)
+            status = _judge(res['conc'], res['u'], lower, upper)
+            w.writerow([i + 1, round(val, 6), res['conc'], res['u'], status])
+        except (ValueError, KeyError) as e:
+            w.writerow([i + 1, r.get(feature, ''), '', '', 'error: ' + str(e)])
+    data = buf.getvalue().encode('utf-8-sig')
+    return send_file(io.BytesIO(data), as_attachment=True, download_name='predictions.csv',
+                     mimetype='text/csv')
 
 
 # ---------------- M6：浓度检测与超限判定 ----------------

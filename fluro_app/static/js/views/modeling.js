@@ -369,6 +369,75 @@
     }
   }
 
+  async function exportModelFile() {
+    // 问题2-K：下载当前选中/生效模型的 .joblib 文件
+    const el = document.getElementById('md-file-status');
+    let mid = null;
+    try {
+      const st = await global.API.get('/api/settings');
+      const active = (st.models || []).find(function (m) { return m.is_active; });
+      mid = active ? active.id : null;
+    } catch (e) { /* ignore */ }
+    if (!mid) { el.textContent = '没有生效模型可导出'; return; }
+    window.location.href = '/api/models/' + mid + '/export';
+    el.textContent = '已触发下载。';
+  }
+
+  async function importModelFile(file) {
+    const el = document.getElementById('md-file-status');
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const res = await global.API.postForm('/api/models/import_joblib', fd);
+      el.textContent = '已导入模型「' + res.name + '」（' + res.type + '）。';
+      loadSaved();
+    } catch (e) {
+      el.textContent = '导入失败：' + e.message;
+      el.className = 'status-line err';
+    }
+  }
+
+  async function predictCsv(file, download) {
+    const el = document.getElementById('md-predict-status');
+    if (!file) { el.textContent = '请先选择特征 CSV'; return; }
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      if (download) {
+        window.location.href = '#';
+        // 直接下载结果 CSV：用隐藏表单提交避免拦截
+        const form = document.createElement('form');
+        form.method = 'post'; form.action = '/api/modeling/predict_csv/export';
+        form.enctype = 'multipart/form-data';
+        const inp = document.createElement('input');
+        inp.type = 'file'; inp.name = 'file'; inp.hidden = true;
+        const dt = new DataTransfer(); dt.items.add(file); inp.files = dt.files;
+        form.appendChild(inp);
+        document.body.appendChild(form); form.submit(); form.remove();
+        el.textContent = '已触发结果 CSV 下载。';
+        return;
+      }
+      const res = await global.API.postForm('/api/modeling/predict_csv', fd);
+      const out = document.getElementById('md-predict-out');
+      let html = '<table class="md-table"><thead><tr><th>行</th><th>特征值</th><th>浓度 C</th><th>不确定度 U</th><th>判定</th></tr></thead><tbody>';
+      (res.predictions || []).forEach(function (p) {
+        html += '<tr><td>' + p.row + '</td><td>' + (p.feature_value == null ? '-' : p.feature_value) + '</td>'
+          + '<td>' + (p.conc == null ? (p.error || '-') : p.conc) + '</td>'
+          + '<td>' + (p.u == null ? '-' : p.u) + '</td>'
+          + '<td>' + (p.status || '-') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      html += '<div class="hint">模型：' + res.model + '，特征列：' + res.feature + '</div>';
+      out.innerHTML = html;
+      out.className = '';
+      el.textContent = '共 ' + res.predictions.length + ' 行。';
+    } catch (e) {
+      el.textContent = '预测失败：' + e.message;
+      el.className = 'status-line err';
+    }
+  }
+
   async function runCv() {
     const status = document.getElementById('md-status');
     const box = document.getElementById('md-cv-box');
@@ -412,6 +481,17 @@
     document.getElementById('md-save').addEventListener('click', saveModel);
     document.getElementById('md-cv').addEventListener('click', runCv);
     document.getElementById('md-explore').addEventListener('click', runExplore);
+    document.getElementById('md-export-file').addEventListener('click', exportModelFile);
+    document.getElementById('md-import-file').addEventListener('change', function (e) {
+      importModelFile(e.target.files[0]); e.target.value = '';
+    });
+    document.getElementById('md-predict-csv').addEventListener('change', function (e) {
+      predictCsv(e.target.files[0], false); e.target.value = '';
+    });
+    document.getElementById('md-predict-csv-export').addEventListener('click', function () {
+      const inp = document.getElementById('md-predict-csv');
+      predictCsv(inp.files && inp.files[0], true);
+    });
     document.getElementById('md-feature').addEventListener('change', function () {
       curFeature = document.getElementById('md-feature').value;
       loadData();
