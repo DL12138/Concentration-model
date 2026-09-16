@@ -90,3 +90,43 @@ def test_p1_roi_crop_without_roi_404(client):
     client.post('/api/pipeline/run', json={'image_ids': [iid]})
     assert client.get(f'/api/images/{iid}/roi_crop').status_code == 404
     assert client.get(f'/api/images/{iid}/roi_avg').status_code == 404
+
+
+# ============ 问题 2：上传删除按钮 + 自动下一步（不强制人工） ============
+
+def test_p2_delete_image_cleans_all(client):
+    iid = _upload(client, conc=20, kind='calibration')
+    _pipeline(client, [iid])
+    # 产生检测记录：先建生效模型再检测
+    g = client.post('/api/calibration/groups', json={'conc': 20}).get_json()
+    client.post('/api/calibration/points', json={'image_id': iid, 'group_id': g['id']})
+    client.post('/api/calibration/fit', json={'feature': 'hue'})
+    client.post('/api/models', json={'name': 'M', 'type': 'linear', 'params': {'a': 1, 'b': 0},
+                                     'metrics': {'r2': 0.99, 'rmse': 1, 'lod': 1}, 'source_snapshot': {}})
+    client.post('/api/detect/' + str(iid), json={})
+    img_info = client.get(f'/api/images/{iid}').get_json()
+    proc = Path(client.application.config['DATA_DIR']) / 'processed' / f'{iid}.png'
+    assert proc.exists() and Path(img_info['file_path']).exists()
+
+    resp = client.delete(f'/api/images/{iid}')
+    assert resp.status_code == 200 and resp.get_json()['ok'] is True
+    assert client.get(f'/api/images/{iid}').status_code == 404
+    assert client.get(f'/api/pipeline/{iid}/roi').status_code == 404  # roi 已清理
+    assert client.get(f'/api/pipeline/{iid}/features').get_json()['features'] is None
+    assert not proc.exists() and not Path(img_info['file_path']).exists()
+
+
+def test_p2_delete_missing_404(client):
+    assert client.delete('/api/images/9999').status_code == 404
+
+
+def test_p2_rerun_pipeline_all(client):
+    """「自动处理全部」= 全量重跑流水线，不需要人工逐步处理。"""
+    iids = [_upload(client, conc=c) for c in (10, 50)]
+    _pipeline(client, iids, with_template=False)
+    # 无模板：ROI 标记 attention 待人工，但重跑流水线本身应返回 ok
+    res = client.post('/api/pipeline/run', json={'image_ids': iids}).get_json()
+    assert res.get('ok') is True
+    for iid in iids:
+        st = client.get(f'/api/images/{iid}').get_json()['status']
+        assert st in ('ok', 'attention', 'processing')

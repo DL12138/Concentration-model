@@ -53,7 +53,7 @@ h3 { font-size:15px; color:#1f2d3a; }
 
 /* 缩略图墙 */
 .gallery { display:flex; flex-wrap:wrap; gap:12px; }
-.gitem { width:150px; border:1px solid #dfe6ec; border-radius:9px; padding:8px; background:#fafcfd; cursor:pointer; }
+.gitem { width:150px; border:1px solid #dfe6ec; border-radius:9px; padding:8px; background:#fafcfd; cursor:pointer; position:relative; }
 .gitem:hover { border-color:#0f9d8f; }
 .gitem.selected { border-color:#0f9d8f; box-shadow:0 0 0 2px rgba(15,157,143,.25); }
 .gitem img { width:100%; border-radius:6px; display:block; }
@@ -70,6 +70,8 @@ h3 { font-size:15px; color:#1f2d3a; }
 .pb-error { background:#fbe4e2; color:#c0392b; }
 .pb-uploaded { background:#eef2f5; color:#6b7a87; }
 .gitem .gstatus { display:inline-block; font-size:10.5px; border-radius:10px; padding:1px 8px; margin-top:4px; }
+.gitem .gdel { position:absolute; top:3px; right:3px; width:22px; height:22px; line-height:18px; text-align:center; border:none; border-radius:50%; background:rgba(200,32,32,.85); color:#fff; font-size:15px; cursor:pointer; z-index:3; padding:0; }
+.gitem .gdel:hover { background:#b81f1f; }
 .st-ok { background:#e4f5f2; color:#0f7d72; }
 .st-attention { background:#fdf1dd; color:#b26a00; }
 .st-error { background:#fbe4e2; color:#c0392b; }

@@ -29,6 +29,10 @@
       const resp = await fetch(url, { method: 'POST', body: formData });
       return handle(resp);
     },
+    async del(url) {
+      const resp = await fetch(url, { method: 'DELETE' });
+      return handle(resp);
+    },
     async postDownload(url, data, filename) {
       const resp = await fetch(url, {
         method: 'POST',

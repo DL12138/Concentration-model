@@ -21,6 +21,22 @@
       const div = document.createElement('div');
       div.className = 'gitem' + (im.id === currentImageId ? ' selected' : '');
       div.dataset.id = im.id;
+      const del = document.createElement('button');
+      del.className = 'gdel';
+      del.title = '删除该图及其记录';
+      del.textContent = '×';
+      del.addEventListener('click', async function (ev) {
+        ev.stopPropagation();
+        if (!confirm('删除该图及其全部记录与文件？')) return;
+        try {
+          await global.API.del('/api/images/' + im.id);
+          if (currentImageId === im.id) currentImageId = null;
+          await refreshGallery();
+          if (global.FluroApp) global.FluroApp.refreshTopbar();
+        } catch (e) {
+          alert('删除失败：' + e.message);
+        }
+      });
       const img = document.createElement('img');
       img.src = im.thumb_url;
       img.alt = '缩略图';
@@ -37,6 +53,7 @@
       const info = document.createElement('div');
       info.textContent = im.known_conc != null ? ('浓度 ' + im.known_conc) : (im.batch ? ('批次 ' + im.batch) : '');
       meta.appendChild(info);
+      div.appendChild(del);
       div.appendChild(img);
       div.appendChild(meta);
       div.addEventListener('click', function () { selectImage(im.id); });
@@ -416,6 +433,21 @@
     const btn = document.getElementById('up-btn');
     const status = document.getElementById('up-status');
     const filesInput = document.getElementById('up-files');
+
+    // 自动处理全部：不强制人工，一键重跑流水线（自动完成预处理/ROI/特征）
+    document.getElementById('up-auto').addEventListener('click', async function () {
+      const list = await global.API.get('/api/images');
+      const ids = list.images.map(function (i) { return i.id; });
+      if (!ids.length) { status.textContent = '当前没有图片可处理'; return; }
+      status.textContent = '自动处理全部（' + ids.length + ' 张）...';
+      status.className = 'status-line';
+      try {
+        await runPipeline(ids);
+      } catch (e) {
+        status.textContent = '自动处理失败：' + e.message;
+        status.className = 'status-line err';
+      }
+    });
 
     btn.addEventListener('click', async function () {
       const files = filesInput.files;

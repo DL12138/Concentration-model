@@ -216,6 +216,22 @@ def image_info(image_id):
     return jsonify(row)
 
 
+@bp.route('/images/<int:image_id>', methods=['DELETE'])
+def delete_image(image_id):
+    """删除一张图：清理相关表（特征/ROI/流水线步骤/检测记录/标定点）与磁盘文件。"""
+    row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
+    if not row:
+        abort(404)
+    for tbl in ('features', 'roi', 'pipeline_steps', 'detections', 'calibration_points'):
+        db.execute(_db_path(), f'DELETE FROM {tbl} WHERE image_id=?', (image_id,))
+    db.execute(_db_path(), 'DELETE FROM images WHERE id=?', (image_id,))
+    for p in (row.get('file_path'), row.get('thumb_path'),
+              _img_dir('processed') / f'{image_id}.png'):
+        if p:
+            Path(p).unlink(missing_ok=True)
+    return jsonify({'ok': True})
+
+
 @bp.route('/images', methods=['GET'])
 def list_images():
     rows = db.query(_db_path(), 'SELECT * FROM images ORDER BY id DESC')
