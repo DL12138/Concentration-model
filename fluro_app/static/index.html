@@ -143,6 +143,11 @@
           </div>
           <div id="feat-status" class="status-line"></div>
           <button id="feat-run" class="btn">重新提取特征</button>
+          <div class="feat-imgs">
+            <figure><img id="feat-overlay" alt="处理后图（ROI 标注）"><figcaption>处理后图（ROI 标注）</figcaption></figure>
+            <figure><img id="feat-crop" alt="ROI 区域"><figcaption>ROI 区域</figcaption></figure>
+            <figure><img id="feat-avg" alt="ROI 平均色"><figcaption>ROI 平均色</figcaption></figure>
+          </div>
           <table class="feat-table" id="feat-table">
             <thead>
               <tr>
@@ -166,6 +171,7 @@
             <p class="hint">依据生效标定模型反解浓度，U 为 95% 预测区间半宽。</p>
           </div>
           <div id="det-status" class="status-line"></div>
+          <div class="result-imgs"><figure><img id="det-overlay" alt="处理后图（ROI 标注）"><figcaption>处理后图（ROI 标注）</figcaption></figure></div>
           <div id="det-zone"></div>
         </div>
       </section>

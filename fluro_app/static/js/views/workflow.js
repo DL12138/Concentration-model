@@ -119,6 +119,12 @@
       const im = imRes.images.find(function (i) { return i.id === currentImageId; });
       const zone = document.getElementById('det-zone');
       const status = document.getElementById('det-status');
+      // 处理后图（ROI 标注）
+      const detImg = document.getElementById('det-overlay');
+      if (detImg) {
+        detImg.src = '/api/images/' + currentImageId + '/overlay?t=' + Date.now();
+        if (detImg.closest('div')) detImg.closest('div').style.display = '';
+      }
       if (im && im.kind === 'calibration') {
         zone.innerHTML = '<div class="card hint">这是标定图（已知浓度 ' + im.known_conc + '）。'
           + '请到「标定建模」页把它加入浓度分组，完成标定后可对检测图出结果。</div>';
@@ -215,7 +221,16 @@
     ensureRoiEditor();
     try {
       const roiRes = await global.API.get('/api/pipeline/' + currentImageId + '/roi');
-      roiEditor.load('/api/images/' + currentImageId + '/original?t=' + Date.now(), roiRes.roi || null);
+      // 编辑器底图用处理后图（选中图时已自动预处理）；无处理图则回退原图
+      const imgUrl = '/api/images/' + currentImageId + '/processed?t=' + Date.now();
+      const im = new Image();
+      im.onload = function () {
+        roiEditor.load(imgUrl, roiRes.roi || null);
+      };
+      im.onerror = function () {
+        roiEditor.load('/api/images/' + currentImageId + '/original?t=' + Date.now(), roiRes.roi || null);
+      };
+      im.src = imgUrl;
       await loadTemplates();
       status.textContent = roiRes.roi
         ? ('当前 ROI：' + (roiRes.roi.source === 'manual' ? '手动' : '自动') + '（' + roiRes.roi.x + ',' + roiRes.roi.y + ',' + roiRes.roi.w + ',' + roiRes.roi.h + '）')
@@ -294,6 +309,11 @@
       document.getElementById('feat-status').textContent = '请先选中一张图';
       return;
     }
+    const t = Date.now();
+    // 处理后图（ROI 标注）、ROI 区域、ROI 平均色
+    const ov = document.getElementById('feat-overlay');
+    const cr = document.getElementById('feat-crop');
+    const av = document.getElementById('feat-avg');
     try {
       const res = await global.API.get('/api/pipeline/' + currentImageId + '/features');
       const f = res.features;
@@ -301,8 +321,13 @@
       if (!f) {
         cells.forEach(function (c) { c.textContent = '-'; });
         document.getElementById('feat-status').textContent = '尚无特征：请先完成 ROI 设置';
+        ov.closest('div').style.display = 'none';
         return;
       }
+      ov.src = '/api/images/' + currentImageId + '/overlay?t=' + t;
+      cr.src = '/api/images/' + currentImageId + '/roi_crop?t=' + t;
+      av.src = '/api/images/' + currentImageId + '/roi_avg?t=' + t;
+      ov.closest('div').style.display = '';
       const vals = [f.mean_r, f.mean_g, f.mean_b, f.hue, f.saturation, f.value, f.ratio_gr, f.ratio_bg, f.intensity, f.texture_entropy];
       cells.forEach(function (c, i) { c.textContent = vals[i]; });
       document.getElementById('feat-status').textContent = '特征已就绪（基于处理后图像）';

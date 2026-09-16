@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """工作流相关 API：上传（M1）→ 预处理（M2）→ ROI/特征（M3）→ 流水线/结果（M4+）。"""
+import io
 import json
 import os
 import uuid
@@ -7,11 +8,13 @@ from datetime import datetime
 from pathlib import Path
 
 import cv2
+import numpy as np
 from flask import Blueprint, current_app, jsonify, request, send_file, abort
 
 from .. import database as db
 from ..image_processing import (read_image, make_thumbnail, preprocess,
-                                extract_features, auto_roi)
+                                extract_features, auto_roi,
+                                roi_to_pixels, crop_roi)
 
 bp = Blueprint('workflow', __name__, url_prefix='/api')
 
@@ -136,6 +139,73 @@ def image_original(image_id):
     if not row:
         abort(404)
     return send_file(row['file_path'])
+
+
+def _png_response(img_rgb):
+    """RGB ndarray → PNG 响应。"""
+    ok, buf = cv2.imencode('.png', img_rgb[:, :, ::-1])
+    if not ok:
+        abort(500)
+    return send_file(io.BytesIO(buf.tobytes()), mimetype='image/png')
+
+
+@bp.route('/images/<int:image_id>/overlay')
+def image_overlay(image_id):
+    """处理后图（无则原图）叠加 ROI 框，返回 PNG。用于各步骤的图片展示。"""
+    row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
+    if not row:
+        abort(404)
+    img = _source_image(row)
+    if img is None:
+        abort(404)
+    roi_row = db.query_one(_db_path(), 'SELECT * FROM roi WHERE image_id=?', (image_id,))
+    if roi_row:
+        try:
+            x0, y0, x1, y1 = roi_to_pixels((roi_row['x'], roi_row['y'], roi_row['w'], roi_row['h']), img.shape)
+            cv2.rectangle(img, (x0, y0), (x1, y1), (0, 255, 255), 3)
+        except ValueError:
+            pass
+    return _png_response(img)
+
+
+@bp.route('/images/<int:image_id>/roi_crop')
+def image_roi_crop(image_id):
+    """ROI 区域裁剪图（处理后图优先）。无 ROI 返回 404。"""
+    row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
+    if not row:
+        abort(404)
+    img = _source_image(row)
+    if img is None:
+        abort(404)
+    roi_row = db.query_one(_db_path(), 'SELECT * FROM roi WHERE image_id=?', (image_id,))
+    if not roi_row:
+        abort(404)
+    try:
+        crop = crop_roi(img, (roi_row['x'], roi_row['y'], roi_row['w'], roi_row['h']))
+    except ValueError:
+        abort(404)
+    return _png_response(crop)
+
+
+@bp.route('/images/<int:image_id>/roi_avg')
+def image_roi_avg(image_id):
+    """ROI 区域平均色块图（128x128 纯色 PNG）。无 ROI 返回 404。"""
+    row = db.query_one(_db_path(), 'SELECT * FROM images WHERE id=?', (image_id,))
+    if not row:
+        abort(404)
+    img = _source_image(row)
+    if img is None:
+        abort(404)
+    roi_row = db.query_one(_db_path(), 'SELECT * FROM roi WHERE image_id=?', (image_id,))
+    if not roi_row:
+        abort(404)
+    try:
+        crop = crop_roi(img, (roi_row['x'], roi_row['y'], roi_row['w'], roi_row['h']))
+    except ValueError:
+        abort(404)
+    mean = crop.reshape(-1, 3).mean(axis=0).astype(np.uint8)
+    block = np.full((128, 128, 3), mean, dtype=np.uint8)
+    return _png_response(block)
 
 
 @bp.route('/images/<int:image_id>', methods=['GET'])
