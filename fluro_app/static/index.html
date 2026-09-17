@@ -22,7 +22,7 @@
     <nav id="sidebar">
       <div class="nav-item active" data-view="home">首页总览</div>
       <div class="nav-item" data-view="workflow">检测工作流</div>
-      <div class="nav-item sub">上传 · 预处理 · ROI · 特征 · 结果</div>
+      <div class="nav-item sub">上传 · 预处理 · 通道 · ROI · 特征 · 结果</div>
       <div class="nav-item" data-view="modeling">标定建模</div>
       <div class="nav-item" data-view="records">检测记录</div>
       <div class="nav-item" data-view="settings">数据与设置</div>
@@ -50,6 +50,12 @@
             <div id="home-today"></div>
           </div>
         </div>
+        <div class="card" style="margin-top:14px;" id="home-wf-card">
+          <h3>最近检测工作流（每步处理图像）
+            <span id="home-wf-meta" style="font-size:12px;color:#8a97a3;"></span>
+          </h3>
+          <div id="home-wf"></div>
+        </div>
       </section>
 
       <!-- ===== 检测工作流 ===== -->
@@ -58,15 +64,16 @@
         <div id="wf-steps">
           <div class="wf-step done" data-wf="1"><span class="snum">1</span>上传</div>
           <div class="wf-step" data-wf="2"><span class="snum">2</span>预处理</div>
-          <div class="wf-step" data-wf="3"><span class="snum">3</span>ROI 分割</div>
-          <div class="wf-step" data-wf="4"><span class="snum">4</span>特征提取</div>
-          <div class="wf-step" data-wf="5"><span class="snum">5</span>结果</div>
+          <div class="wf-step" data-wf="3"><span class="snum">3</span>通道分离</div>
+          <div class="wf-step" data-wf="4"><span class="snum">4</span>ROI 分割</div>
+          <div class="wf-step" data-wf="5"><span class="snum">5</span>特征提取</div>
+          <div class="wf-step" data-wf="6"><span class="snum">6</span>结果</div>
         </div>
         <!-- 步骤 1：上传 -->
         <div class="wf-panel" id="wf-panel-1">
           <div class="panel-head">
             <h3>① 上传试纸图像</h3>
-            <p class="hint">支持批量导入；上传后自动进入流水线（后续阶段接入）。标定图需填写已知浓度。</p>
+            <p class="hint">支持批量导入；上传后自动进入流水线。标定图需填写已知浓度；一次选择多张标定照片时，将按顺序自动编号为同一浓度的重复测量（重复 1、2、3…），并在标定建模页输出每张图结果与均值±误差。</p>
           </div>
           <div class="form-row">
             <label>用途：
@@ -76,12 +83,28 @@
               </select>
             </label>
             <label>批次号：<input id="up-batch" type="text" placeholder="如 2026-09-16-01"></label>
-            <label id="up-conc-wrap" style="display:none;">已知浓度（ng/mL）：<input id="up-conc" type="number" step="any" placeholder="必填"></label>
+            <label id="up-conc-wrap" style="display:none;">已知浓度：<input id="up-conc" type="number" step="any" placeholder="必填">
+              <select id="up-conc-unit">
+                <option value="ng/mL">ng/mL</option>
+                <option value="μg/mL">μg/mL</option>
+                <option value="mg/mL">mg/mL</option>
+                <option value="μmol/L">μmol/L</option>
+                <option value="mmol/L">mmol/L</option>
+                <option value="mol/L">mol/L</option>
+              </select></label>
             <label>图片：<input id="up-files" type="file" accept="image/*" multiple></label>
             <button id="up-btn" class="btn primary">上传</button>
+            <button id="up-dir-btn" class="btn">导入文件夹</button>
+            <input id="up-dir" type="file" webkitdirectory multiple style="display:none;">
+            <button id="up-auto" class="btn">自动处理全部</button>
           </div>
           <div id="up-status" class="status-line"></div>
           <div id="pipe-status" class="pipe-status"></div>
+          <div class="gallery-toolbar">
+            <label class="batch-sel"><input type="checkbox" id="up-sel-all"> 全选</label>
+            <span id="up-sel-count" class="sel-count">已选 0 张</span>
+            <button id="up-batch-del" class="btn small danger" disabled>批量删除所选</button>
+          </div>
           <div id="up-gallery" class="gallery"></div>
         </div>
         <!-- 步骤 2：预处理 -->
@@ -106,9 +129,21 @@
             </label>
             <label><input type="checkbox" id="pp-dark"> 暗场校正</label>
             <label><input type="checkbox" id="pp-flat"> 平场校正</label>
+            <label><input type="checkbox" id="pp-wb"> 白平衡校正</label>
+            <label>白参考 ROI：<input id="pp-wb-roi" type="text" placeholder="Bg" style="width:70px;"></label>
             <button id="pp-ref-dark" class="btn small">上传暗场参考图</button>
             <button id="pp-ref-flat" class="btn small">上传平场参考图</button>
             <button id="pp-run" class="btn primary">重跑本步</button>
+          </div>
+          <div class="ref-previews">
+            <figure class="ref-item">
+              <img id="pp-dark-prev" alt="暗场参考图预览" style="display:none;">
+              <figcaption>暗场参考图 <button id="pp-dark-clear" class="btn tiny">清除</button></figcaption>
+            </figure>
+            <figure class="ref-item">
+              <img id="pp-flat-prev" alt="平场参考图预览" style="display:none;">
+              <figcaption>平场参考图 <button id="pp-flat-clear" class="btn tiny">清除</button></figcaption>
+            </figure>
           </div>
           <div id="pp-status" class="status-line"></div>
           <div id="pp-compare" class="compare" style="display:none;">
@@ -120,29 +155,50 @@
             <div class="compare-labels"><span>原图</span><span>处理后</span></div>
           </div>
         </div>
-        <!-- 步骤 3：ROI 分割 -->
+        <!-- 步骤 3：RGB 通道分离（问题5） -->
         <div class="wf-panel" id="wf-panel-3" style="display:none;">
           <div class="panel-head">
-            <h3>③ ROI 分割</h3>
-            <p class="hint">点击「自动套用模板」按已存模板定位；也可在图上直接框选/拖动/缩放修正，然后「保存修正」。首次使用可框选后「存为模板」。</p>
+            <h3>③ RGB 通道分离</h3>
+            <p class="hint">将处理后图像按 R/G/B 三通道分离为灰度图，并给出各通道均值，便于观察颜色构成。</p>
+          </div>
+          <div id="ch-status" class="status-line"></div>
+          <button id="ch-run" class="btn">重新分离通道</button>
+          <div id="ch-zone"></div>
+        </div>
+        <!-- 步骤 4：ROI 分割 -->
+        <div class="wf-panel" id="wf-panel-4" style="display:none;">
+          <div class="panel-head">
+            <h3>④ ROI 分割</h3>
+            <p class="hint">点击「自动套用模板」按已存模板定位，无模板时自动识别；也可在图上直接框选/拖动/缩放修正，然后「保存修正」。可勾选「背景扣除」减去检测区外环背景。首次使用可框选后「存为模板」。</p>
           </div>
           <div class="form-row">
             <button id="roi-auto" class="btn">自动套用模板</button>
             <button id="roi-save" class="btn primary">保存修正</button>
             <button id="roi-save-tpl" class="btn">存为模板</button>
             <label>模板：<select id="roi-tpl-select"></select></label>
+            <label><input type="checkbox" id="roi-bg"> 背景扣除</label>
           </div>
           <div id="roi-status" class="status-line"></div>
           <div class="roi-canvas-wrap"><canvas id="roi-canvas" width="640" height="480"></canvas></div>
+          <div class="result-imgs"><figure><img id="roi-overlay" alt="修正后图（ROI 标注）"><figcaption>修正后图（ROI 标注）</figcaption></figure></div>
         </div>
-        <!-- 步骤 4：特征提取 -->
-        <div class="wf-panel" id="wf-panel-4" style="display:none;">
+        <!-- 步骤 5：特征提取 -->
+        <div class="wf-panel" id="wf-panel-5" style="display:none;">
           <div class="panel-head">
-            <h3>④ 特征提取</h3>
+            <h3>⑤ 特征提取</h3>
             <p class="hint">检测区颜色与纹理特征；ROI 修正后自动重算。</p>
           </div>
           <div id="feat-status" class="status-line"></div>
-          <button id="feat-run" class="btn">重新提取特征</button>
+          <div class="form-row">
+            <button id="feat-run" class="btn">重新提取特征</button>
+            <a class="btn" href="/api/export/features.csv" download>导出 CSV</a>
+            <a class="btn" href="/api/export/features.xlsx" download>导出 Excel</a>
+          </div>
+          <div class="feat-imgs">
+            <figure><img id="feat-overlay" alt="处理后图（ROI 标注）"><figcaption>处理后图（ROI 标注）</figcaption></figure>
+            <figure><img id="feat-crop" alt="ROI 区域"><figcaption>ROI 区域</figcaption></figure>
+            <figure><img id="feat-avg" alt="ROI 平均色"><figcaption>ROI 平均色</figcaption></figure>
+          </div>
           <table class="feat-table" id="feat-table">
             <thead>
               <tr>
@@ -158,15 +214,39 @@
               </tr>
             </tbody>
           </table>
+          <div class="card" style="margin-top:14px;">
+            <h3>各 ROI 平均 RGB 柱状图（T 检测区 / Bg 背景区对照）</h3>
+            <div id="feat-bars" class="hint">选择图片并提取特征后显示。</div>
+          </div>
+          <div class="card" style="margin-top:14px;">
+            <h3>通道分离 RGB 值（全图）与 ROI 平均 RGB 对照</h3>
+            <div id="feat-ch" class="hint">加载中...</div>
+          </div>
+          <div class="card" style="margin-top:14px;">
+            <h3>特征算法说明</h3>
+            <ul class="algo-list">
+              <li><b>平均 R/G/B</b>：ROI 区域内全部像素各通道的算术平均值（勾选「背景扣除」时减去 ROI 外环背景均值）。</li>
+              <li><b>色相 / 饱和度 / 明度</b>：ROI 像素转 HSV 色彩空间；色相采用<b>圆形均值</b>，避免红色端 0/180 环绕导致均值失真。</li>
+              <li><b>G/R、B/G</b>：平均绿/红通道比、平均蓝/绿通道比，用于描述通道间相对强度。</li>
+              <li><b>强度</b>：HSV 明度（V）通道均值，反映荧光亮度。</li>
+              <li><b>纹理熵</b>：ROI 灰度直方图归一化后的信息熵，数值越大纹理越复杂。</li>
+              <li><b>平均 ROI 图片</b>：上方「ROI 平均色」为 ROI 区域平均 RGB 生成的纯色块；「ROI 区域」为裁剪后的原样图。</li>
+            </ul>
+          </div>
         </div>
-        <!-- 步骤 5：结果 -->
-        <div class="wf-panel" id="wf-panel-5" style="display:none;">
+        <!-- 步骤 6：结果 -->
+        <div class="wf-panel" id="wf-panel-6" style="display:none;">
           <div class="panel-head">
-            <h3>⑤ 浓度检测结果</h3>
+            <h3>⑥ 浓度检测结果</h3>
             <p class="hint">依据生效标定模型反解浓度，U 为 95% 预测区间半宽。</p>
           </div>
           <div id="det-status" class="status-line"></div>
+          <div class="result-imgs"><figure><img id="det-overlay" alt="处理后图（ROI 标注）"><figcaption>处理后图（ROI 标注）</figcaption></figure></div>
           <div id="det-zone"></div>
+          <div class="det-actions" style="margin-top:10px;">
+            <button id="det-build-model" class="btn primary">生成模型（用当前标定数据拟合并生效）</button>
+            <span id="det-build-msg" class="status-line" style="margin:0 0 0 8px;"></span>
+          </div>
         </div>
       </section>
 
@@ -190,7 +270,41 @@
             </label>
             <button id="md-fit" class="btn primary">拟合全部模型</button>
             <button id="md-save" class="btn">保存所选为生效模型</button>
+            <button id="md-import" class="btn">导入 CSV/Excel 标定数据</button>
+            <input id="md-import-file" type="file" accept=".csv,.xlsx,.xls" style="display:none;">
             <span id="md-status" class="status-line" style="margin:0;"></span>
+          </div>
+          <div class="form-row">
+            <label><input type="checkbox" id="md-iqr" checked> IQR 剔除离群</label>
+            <label><input type="checkbox" id="md-log"> log 浓度</label>
+            <label><input type="checkbox" id="md-zscore"> Z-score 标准化</label>
+            <label>交叉验证：
+              <select id="md-cv-method">
+                <option value="loo" selected>留一法</option>
+                <option value="kfold">5 折</option>
+                <option value="leave_group">留浓度组</option>
+              </select>
+            </label>
+            <button id="md-cv" class="btn">交叉验证</button>
+          </div>
+          <div id="md-import-box" style="display:none;margin-top:10px;padding:12px;background:#f4f7f9;border-radius:8px;">
+            <div class="form-row">
+              <label>浓度列：<select id="md-imp-conc"></select></label>
+              <label>特征列：<select id="md-imp-feat"></select></label>
+              <label>浓度单位：
+                <select id="md-imp-unit">
+                  <option value="ng/mL">ng/mL</option>
+                  <option value="μg/mL">μg/mL</option>
+                  <option value="mg/mL">mg/mL</option>
+                  <option value="μmol/L">μmol/L</option>
+                  <option value="mmol/L">mmol/L</option>
+                  <option value="mol/L">mol/L</option>
+                </select>
+              </label>
+              <button id="md-import-go" class="btn primary">导入</button>
+              <span id="md-imp-status" class="status-line" style="margin:0;"></span>
+            </div>
+            <div id="md-imp-preview" class="hint"></div>
           </div>
         </div>
         <div class="md-grid">
@@ -204,6 +318,30 @@
             <div id="md-models"></div>
             <h3 style="margin-top:16px;">已保存模型</h3>
             <div id="md-saved"></div>
+            <h3 style="margin-top:16px;">交叉验证结果（问题2-H）</h3>
+            <div id="md-cv-box" class="hint">点击「交叉验证」查看各模型 R² / RMSE / MAE。</div>
+            <h3 style="margin-top:16px;">模型文件（问题2-K）</h3>
+            <div class="form-row">
+              <button id="md-export-file" class="btn small">导出当前模型 .joblib</button>
+              <label class="btn small file-label">导入 .joblib
+                <input type="file" id="md-import-file" accept=".joblib" hidden></label>
+              <span id="md-file-status" class="status-line" style="margin:0;"></span>
+            </div>
+            <h3 style="margin-top:16px;">特征 CSV 批量预测（问题2-K）</h3>
+            <div class="form-row">
+              <label class="btn small file-label">选择特征 CSV
+                <input type="file" id="md-predict-csv" accept=".csv" hidden></label>
+              <button id="md-predict-csv-export" class="btn small">预测并导出 CSV</button>
+              <span id="md-predict-status" class="status-line" style="margin:0;"></span>
+            </div>
+            <div id="md-predict-out" class="hint">CSV 需包含生效模型的特征列（列名见已保存模型）。</div>
+          </div>
+          <div class="card" id="md-explore-card">
+            <h3>数据探索（浓度 vs 特征）
+              <button id="md-explore" class="btn small">刷新散点/箱线</button>
+              <span id="md-explore-info" style="font-size:12px;color:#8a97a3;"></span>
+            </h3>
+            <div id="md-explore-plot" class="hint">拟合并选择特征后点「刷新散点/箱线」查看分布与趋势。</div>
           </div>
           <div class="card" id="md-curve-card" style="grid-column:1 / -1;">
             <h3>标定曲线 <span id="md-curve-title" style="font-size:12px;color:#8a97a3;"></span></h3>
@@ -233,6 +371,38 @@
       <section class="view" id="view-settings">
         <h2>数据与设置</h2>
         <div class="md-grid">
+          <div class="card">
+            <h3>实验信息（单卡片槽比色检测）</h3>
+            <p class="hint">记录实验背景；占位项请按你的实际情况填写，供后续建模特征与数据处理参考。</p>
+            <div class="form-row">
+              <label>待测物：<input id="ex-analyte" type="text" placeholder="如 某蛋白 / 某离子 / 某农药"></label>
+              <label>颜色变化趋势：<input id="ex-trend" type="text" placeholder="浓度越高 T 区越...（变黄/变浅/变深）"></label>
+            </div>
+            <div class="form-row">
+              <label>检测载体：
+                <select id="ex-carrier">
+                  <option value="single_card" selected>单卡片/试纸条</option>
+                  <option value="strip">试纸条</option>
+                </select>
+              </label>
+              <label>每图 ROI 数量：<input id="ex-roi-count" type="number" min="1" max="10"></label>
+              <label>ROI 名称（逗号分隔）：<input id="ex-roi-names" type="text" placeholder="T,Bg"></label>
+            </div>
+            <div class="form-row">
+              <label><input type="checkbox" id="ex-colorcard"> 有色卡（可用色卡做颜色校正）</label>
+              <label><input type="checkbox" id="ex-blankref"> 有空白参考区（Bg 背景区）</label>
+            </div>
+            <div class="form-row">
+              <label>已知浓度点（逗号分隔）：<input id="ex-concs" type="text" placeholder="0,1,2,5,10,20,50"></label>
+              <label>每浓度重复次数：<input id="ex-replicates" type="number" min="1" placeholder="如 3"></label>
+              <label>图片数量：<input id="ex-images" type="number" min="0" placeholder="可选"></label>
+            </div>
+            <div class="form-row">
+              <label>备注：<input id="ex-note" type="text" style="width:320px;"></label>
+              <button id="ex-save" class="btn primary">保存实验信息</button>
+              <span id="ex-status" class="status-line" style="margin:0;"></span>
+            </div>
+          </div>
           <div class="card">
             <h3>检测判定限值</h3>
             <div class="form-row">

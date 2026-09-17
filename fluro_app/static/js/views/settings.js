@@ -32,6 +32,50 @@
     }
   }
 
+  async function loadExperiment() {
+    try {
+      const ex = await global.API.get('/api/experiment');
+      document.getElementById('ex-analyte').value = ex.analyte || '';
+      document.getElementById('ex-trend').value = ex.color_trend || '';
+      document.getElementById('ex-carrier').value = ex.carrier || 'single_card';
+      document.getElementById('ex-roi-count').value = ex.roi_count != null ? ex.roi_count : 2;
+      document.getElementById('ex-roi-names').value = (ex.roi_names || []).join(',');
+      document.getElementById('ex-colorcard').checked = !!ex.has_color_card;
+      document.getElementById('ex-blankref').checked = ex.has_blank_ref !== false;
+      document.getElementById('ex-concs').value = ex.known_concs || '';
+      document.getElementById('ex-replicates').value = ex.replicates || '';
+      document.getElementById('ex-images').value = ex.image_count || '';
+      document.getElementById('ex-note').value = ex.note || '';
+    } catch (e) { /* 忽略 */ }
+  }
+
+  async function saveExperiment() {
+    const status = document.getElementById('ex-status');
+    const names = document.getElementById('ex-roi-names').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    const payload = {
+      analyte: document.getElementById('ex-analyte').value,
+      color_trend: document.getElementById('ex-trend').value,
+      carrier: document.getElementById('ex-carrier').value,
+      roi_count: parseInt(document.getElementById('ex-roi-count').value, 10),
+      roi_names: names,
+      has_color_card: document.getElementById('ex-colorcard').checked,
+      has_blank_ref: document.getElementById('ex-blankref').checked,
+      known_concs: document.getElementById('ex-concs').value,
+      replicates: document.getElementById('ex-replicates').value,
+      image_count: document.getElementById('ex-images').value,
+      note: document.getElementById('ex-note').value,
+    };
+    status.textContent = '保存中...';
+    try {
+      const res = await global.API.put('/api/experiment', payload);
+      status.textContent = '实验信息已保存（ROI：' + res.experiment.roi_names.join('、') + '）';
+      status.className = 'status-line';
+    } catch (e) {
+      status.textContent = '保存失败：' + e.message;
+      status.className = 'status-line err';
+    }
+  }
+
   function renderRefs(refs) {
     const el = document.getElementById('st-refs');
     const dark = refs && refs.dark_path ? refs.dark_path : '未设置';
@@ -176,7 +220,9 @@
     document.getElementById('st-save').addEventListener('click', saveSettings);
     document.getElementById('st-backup').addEventListener('click', doBackup);
     document.getElementById('st-refresh').addEventListener('click', load);
+    document.getElementById('ex-save').addEventListener('click', saveExperiment);
     load();
+    loadExperiment();
   }
 
   function onView() { if (!initialized) init(); else load(); }

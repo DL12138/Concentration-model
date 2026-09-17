@@ -69,6 +69,17 @@ def preprocess(img_rgb, method='gaussian', kernel=5, dark=None, flat=None):
     return denoise(corrected, method=method, kernel=kernel)
 
 
+def white_balance_correct(img_rgb, white_rgb):
+    """白平衡增益校正（问题2-C）：R_corr = R_sample / R_white（通道级，归一化到 8bit）。
+
+    white_rgb: 白参考区域平均 RGB（如背景区/白纸/色卡白块）。返回 RGB uint8。
+    """
+    white = np.asarray(white_rgb, dtype=np.float32).reshape(3)
+    scale = 255.0 / np.clip(white, 1.0, 255.0)
+    out = img_rgb.astype(np.float32) * scale[None, None, :]
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
 # ---------------- M3：ROI 与特征 ----------------
 
 def roi_to_pixels(roi, shape):
@@ -122,6 +133,181 @@ def extract_features(img_rgb, roi):
         'intensity': round(float(value), 3),
         'texture_entropy': round(entropy, 4),
     }
+
+
+# ---------------- 问题2-B：单卡片多 ROI 扩展特征 ----------------
+
+def extract_roi_features(img_rgb, roi):
+    """提取单个 ROI 的完整比色特征（问题2 规格）。
+
+    返回：RGB 均值/中位数/标准差、HSV、CIELAB、灰度、光密度 OD、通道比。
+    """
+    crop = crop_roi(img_rgb, roi)
+    rgb = crop.reshape(-1, 3).astype(np.float64)
+    mean = rgb.mean(axis=0)
+    med = np.median(rgb, axis=0)
+    std = rgb.std(axis=0)
+    mean_r, mean_g, mean_b = mean[0], mean[1], mean[2]
+
+    hsv = cv2.cvtColor(crop, cv2.COLOR_RGB2HSV)
+    hue_rad = np.deg2rad(hsv[:, :, 0].astype(np.float64) * 2.0)
+    hue = float(np.rad2deg(np.arctan2(np.sin(hue_rad).mean(), np.cos(hue_rad).mean())) / 2.0)
+    if hue < 0:
+        hue += 180.0
+
+    lab = cv2.cvtColor(crop, cv2.COLOR_RGB2LAB).reshape(-1, 3).astype(np.float64)
+    l_mean, a_mean, b_mean = lab.mean(axis=0)
+
+    gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY).mean()
+
+    # 光密度 OD = -log10(I / I0)，I0 = 255（8bit 最大值）
+    od = -np.log10(np.clip(mean, 1.0, 255.0) / 255.0)
+
+    return {
+        'mean_r': round(float(mean_r), 3),
+        'mean_g': round(float(mean_g), 3),
+        'mean_b': round(float(mean_b), 3),
+        'median_r': round(float(med[0]), 3),
+        'median_g': round(float(med[1]), 3),
+        'median_b': round(float(med[2]), 3),
+        'std_r': round(float(std[0]), 3),
+        'std_g': round(float(std[1]), 3),
+        'std_b': round(float(std[2]), 3),
+        'hue': round(hue, 3),
+        'saturation': round(float(hsv[:, :, 1].mean()), 3),
+        'value': round(float(hsv[:, :, 2].mean()), 3),
+        'lab_l': round(float(l_mean), 3),
+        'lab_a': round(float(a_mean), 3),
+        'lab_b': round(float(b_mean), 3),
+        'gray': round(float(gray), 3),
+        'od_r': round(float(od[0]), 4),
+        'od_g': round(float(od[1]), 4),
+        'od_b': round(float(od[2]), 4),
+        'ratio_gr': round(float(mean_g) / (float(mean_r) + 1e-6), 4),
+        'ratio_gb': round(float(mean_g) / (float(mean_b) + 1e-6), 4),
+        'ratio_rb': round(float(mean_r) / (float(mean_b) + 1e-6), 4),
+        'intensity': round(float(hsv[:, :, 2].mean()), 3),
+    }
+
+
+def delta_e_lab(lab1, lab2):
+    """CIEDE 色差（简化 ΔE76）：sqrt(ΔL² + Δa² + Δb²)。"""
+    return float(np.sqrt((lab1[0] - lab2[0]) ** 2 + (lab1[1] - lab2[1]) ** 2 + (lab1[2] - lab2[2]) ** 2))
+
+
+def derive_combined_features(roi_feats, sample_names=('T', 'Bg')):
+    """由各 ROI 特征派生组合特征（问题2 规格）：
+
+    sample 与 background 之间的通道差值/比值、色差 ΔE（用 Lab）。
+    roi_feats: {roi_name: feats}。返回 combined dict（键带 ROI 名前缀）。
+    """
+    combined = {}
+    if not roi_feats:
+        return combined
+    bg = None
+    for key in ('Bg', 'background', 'Blank', 'blank'):
+        if key in roi_feats:
+            bg = roi_feats[key]
+            break
+    sample = None
+    sample_name = None
+    for rname, f in roi_feats.items():
+        if rname in ('Bg', 'background', 'Blank', 'blank'):
+            continue
+        sample, sample_name = f, rname
+        break
+    if sample is None and bg is None:
+        return combined
+    if bg is None:
+        bg = sample
+    if sample is None:
+        sample, sample_name = bg, 'T'
+    p = sample_name
+    for ch, k in (('R', 'mean_r'), ('G', 'mean_g'), ('B', 'mean_b')):
+        s = float(sample.get(k, 0))
+        b = float(bg.get(k, 0))
+        combined[f'{p}_{ch}_over_Bg_{ch}'] = round(s / (b + 1e-6), 4)
+        combined[f'{p}_{ch}_minus_Bg_{ch}'] = round(s - b, 3)
+        combined[f'OD_{p}_{ch}_minus_Bg_{ch}'] = round(float(sample.get('od_' + k[-1], 0)) - float(bg.get('od_' + k[-1], 0)), 4)
+    if 'lab_l' in sample and 'lab_l' in bg:
+        combined[f'deltaE_{p}_vs_Bg'] = round(delta_e_lab(
+            (sample['lab_l'], sample['lab_a'], sample['lab_b']),
+            (bg['lab_l'], bg['lab_a'], bg['lab_b'])), 3)
+    return combined
+
+
+def auto_detect_roi(img_rgb, margin_frac=0.06):
+    """基于内容自动识别检测区：取亮/饱和（荧光）像素的最大连通域外接矩形。
+
+    返回归一化 (x,y,w,h)；找不到明显检测区返回 None。
+    """
+    h, w = img_rgb.shape[:2]
+    if h == 0 or w == 0:
+        return None
+    hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
+    s = hsv[:, :, 1].astype(np.float32)
+    v = hsv[:, :, 2].astype(np.float32)
+    mask = ((s > 40) & (v > 50)).astype(np.uint8)
+    k = max(3, min(31, (int(min(h, w) * 0.02) | 1)))
+    kernel = np.ones((k, k), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not cnts:
+        return None
+    best = max(cnts, key=cv2.contourArea)
+    x0, y0, bw, bh = cv2.boundingRect(best)
+    if bw * bh < h * w * 0.001:
+        return None
+    mx, my = int(margin_frac * bw), int(margin_frac * bh)
+    x0 = max(0, x0 - mx)
+    y0 = max(0, y0 - my)
+    x1 = min(w, x0 + bw + 2 * mx)
+    y1 = min(h, y0 + bh + 2 * my)
+    return (x0 / w, y0 / h, (x1 - x0) / w, (y1 - y0) / h)
+
+
+def bg_ring_mean(img_rgb, roi, expand=0.25):
+    """背景环均值：ROI 外扩 expand 比例的环形区域 RGB 均值（用于背景扣除）。"""
+    h, w = img_rgb.shape[:2]
+    x0, y0, x1, y1 = roi_to_pixels(roi, img_rgb.shape)
+    bw, bh = x1 - x0, y1 - y0
+    if bw <= 0 or bh <= 0:
+        raise ValueError('ROI 为空')
+    ex0 = max(0, int(x0 - bw * expand))
+    ey0 = max(0, int(y0 - bh * expand))
+    ex1 = min(w, int(x1 + bw * expand))
+    ey1 = min(h, int(y1 + bh * expand))
+    if ex1 <= ex0 or ey1 <= ey0:
+        raise ValueError('背景环为空')
+    ox, oy = np.meshgrid(np.arange(ex0, ex1), np.arange(ey0, ey1))
+    inner = (ox >= x0) & (ox < x1) & (oy >= y0) & (oy < y1)
+    ring = img_rgb[ey0:ey1, ex0:ex1][~inner]
+    if ring.size == 0:
+        raise ValueError('背景环为空')
+    return ring.reshape(-1, 3).mean(axis=0)
+
+
+def apply_bg_subtraction(feats, bg_rgb):
+    """背景扣除：从特征均值中减去背景环均值，并重算派生指标（色相/饱和度/明度/比值）。"""
+    nr = max(0.0, float(feats['mean_r']) - float(bg_rgb[0]))
+    ng = max(0.0, float(feats['mean_g']) - float(bg_rgb[1]))
+    nb = max(0.0, float(feats['mean_b']) - float(bg_rgb[2]))
+    px = np.clip([nr, ng, nb], 0, 255).astype(np.uint8).reshape(1, 1, 3)
+    h, s, v = cv2.cvtColor(px, cv2.COLOR_RGB2HSV)[0, 0]
+    out = dict(feats)
+    out.update({
+        'mean_r': round(nr, 3),
+        'mean_g': round(ng, 3),
+        'mean_b': round(nb, 3),
+        'hue': round(float(h), 3),
+        'saturation': round(float(s), 3),
+        'value': round(float(v), 3),
+        'ratio_gr': round(ng / (nr + 1e-6), 4),
+        'ratio_bg': round(nb / (ng + 1e-6), 4),
+        'intensity': round(float(v), 3),
+    })
+    return out
 
 
 def auto_roi(img_rgb, template_roi, ref_img_rgb=None, margin_px=40):

@@ -32,4 +32,6 @@ class Config:
     CONFIDENCE = 0.95             # 不确定度置信水平
     LIMIT_LOWER = 0.0             # 判定下限
     LIMIT_UPPER = None            # 判定上限（None 表示未设置）
-    UNIT = 'ng/mL'                # 浓度单位
+    UNIT = 'ng/mL'                # 默认浓度单位
+    # 可选的浓度单位（上传标定图时选择）
+    CONC_UNITS = ['ng/mL', 'μg/mL', 'mg/mL', 'μmol/L', 'mmol/L', 'mol/L']

@@ -66,12 +66,25 @@
       el.innerHTML = '<div class="empty">暂无标定数据。请上传「标定」图并完成流水线（ROI/特征），再创建浓度分组加入。</div>';
       return;
     }
-    let html = '<table class="md-table"><thead><tr><th>浓度</th><th>分组</th><th>点数</th><th>均值(当前特征)</th><th>SD</th><th>操作</th></tr></thead><tbody>';
+    let html = '<table class="md-table"><thead><tr><th>浓度</th><th>分组</th><th>重复</th><th>各重复值（' + esc(curFeature) + '）</th><th>均值</th><th>SD</th><th>CV%</th><th>操作</th></tr></thead><tbody>';
     groups.forEach(function (g) {
       const m = g.mean ? g.mean[curFeature] : null;
       const s = g.sd ? g.sd[curFeature] : null;
-      html += '<tr><td>' + esc(g.conc) + '</td><td>' + esc(g.name) + '</td><td>' + g.n + '</td>'
-        + '<td>' + (m == null ? '-' : m) + '</td><td>' + (s == null ? '-' : s) + '</td>'
+      const cv = g.cv ? g.cv[curFeature] : null;
+      // 每张重复图的结果（按 replicate 排序）
+      const reps = (g.points || []).filter(function (p) { return p.included; })
+        .map(function (p) {
+          const v = (p.features && p.features[curFeature]) != null ? p.features[curFeature] : p.feature_value;
+          const repNo = p.replicate || '-';
+          return (v == null ? '-' : Number(v).toFixed(4)) + '<span style="color:#8a97a3;">(#' + repNo + ')</span>';
+        })
+        .join('　');
+      html += '<tr><td>' + esc(g.conc) + (g.unit && g.unit !== 'ng/mL' ? ' ' + esc(g.unit) : '') + '</td>'
+        + '<td>' + esc(g.name) + '</td><td>' + g.n + '</td>'
+        + '<td>' + (reps || '-') + '</td>'
+        + '<td>' + (m == null ? '-' : Number(m).toFixed(4)) + '</td>'
+        + '<td>' + (s == null ? '-' : Number(s).toFixed(4)) + '</td>'
+        + '<td>' + (cv == null ? '-' : cv) + '</td>'
         + '<td><button class="btn small" data-del="' + g.id + '">删除分组</button></td></tr>';
     });
     html += '</tbody></table>';
@@ -129,12 +142,20 @@
     const status = document.getElementById('md-status');
     status.textContent = '拟合中...';
     try {
+      // 问题2-H：先持久化预处理设置，拟合/检测共用同一口径
+      await global.API.post('/api/modeling/preprocess', {
+        iqr: document.getElementById('md-iqr').checked,
+        log_conc: document.getElementById('md-log').checked,
+        zscore: document.getElementById('md-zscore').checked,
+      });
       const res = await global.API.post('/api/calibration/fit', { feature: curFeature });
       curResults = res;
       selectedType = res.best;
       renderModels(res);
       renderCurveFromResults(res);
-      status.textContent = '拟合完成：' + res.n + ' 个数据点，最佳 ' + (res.best || '-');
+      const prepInfo = res.preprocess && res.preprocess.y_std ? '（Z-score 已标准化）' : '';
+      status.textContent = '拟合完成：' + res.n + ' 个数据点，最佳 ' + (res.best || '-')
+        + (res.preprocess && res.preprocess.removed ? '，IQR 剔除 ' + res.preprocess.removed + ' 个' : '') + prepInfo;
     } catch (e) {
       status.textContent = '拟合失败：' + e.message;
       status.className = 'status-line err';
@@ -143,8 +164,11 @@
 
   function renderModels(res) {
     const el = document.getElementById('md-models');
-    const order = ['linear', 'poly2', 'exp', '4pl'];
-    const names = { linear: '线性', poly2: '二次多项式', exp: '指数', '4pl': '四参数逻辑 4PL' };
+    const order = ['linear', 'poly2', 'log', 'exp', '4pl', 'pls', 'svr', 'rf'];
+    const names = {
+      linear: '线性', poly2: '二次多项式', log: '对数', exp: '指数',
+      '4pl': '四参数逻辑 4PL', pls: 'PLSR', svr: 'SVR（对比）', rf: '随机森林（对比）',
+    };
     let html = '<table class="md-table"><thead><tr><th></th><th>模型</th><th>R²</th><th>RMSE</th><th>LOD</th><th>状态</th></tr></thead><tbody>';
     order.forEach(function (mt) {
       const r = res.results[mt];
@@ -152,7 +176,7 @@
       const isBest = res.best === mt;
       html += '<tr class="' + (selectedType === mt ? 'sel' : '') + '" data-type="' + mt + '" style="cursor:pointer;">'
         + '<td>' + (isBest ? '<span class="pb pb-ok">推荐</span>' : '') + '</td>'
-        + '<td>' + names[mt] + '</td>';
+        + '<td>' + names[mt] + (r.compare ? ' <span class="gstatus st-attention">仅对比</span>' : '') + '</td>';
       if (r.error) {
         html += '<td colspan="3" class="err-text">' + esc(r.error) + '</td>';
       } else {
@@ -161,7 +185,7 @@
       html += '<td>' + (selectedType === mt ? '选中' : '') + '</td></tr>';
     });
     html += '</tbody></table>';
-    html += '<div class="hint">点击行选中模型，再点「保存所选为生效模型」。</div>';
+    html += '<div class="hint">点击行选中模型，再点「保存所选为生效模型」；SVR/随机森林仅作对比，不可保存为生效模型。</div>';
     el.innerHTML = html;
     el.querySelectorAll('tr[data-type]').forEach(function (tr) {
       tr.addEventListener('click', function () {
@@ -254,7 +278,7 @@
     data.forEach(function (p) {
       svg += '<circle cx="' + X(p[0]).toFixed(1) + '" cy="' + Y(p[1]).toFixed(1) + '" r="4" fill="#1d6fb8"/>';
     });
-    svg += '<text x="' + (W / 2) + '" y="' + (H - 8) + '" font-size="11" fill="#55636f" text-anchor="middle">浓度（ng/mL）</text>';
+    svg += '<text x="' + (W / 2) + '" y="' + (H - 8) + '" font-size="11" fill="#55636f" text-anchor="middle">浓度（' + (curResults && curResults.unit || 'ng/mL') + '）</text>';
     svg += '<text x="16" y="' + (H / 2) + '" font-size="11" fill="#55636f" text-anchor="middle" transform="rotate(-90 16 ' + (H / 2) + ')">特征值</text>';
     svg += '</svg>';
     el.innerHTML = svg;
@@ -270,12 +294,18 @@
       document.getElementById('md-status').textContent = '该模型不可用';
       return;
     }
+    if (r.compare) {
+      document.getElementById('md-status').textContent = 'SVR/随机森林为对比模型，暂不支持保存为生效模型（无可解析反解）';
+      return;
+    }
     const name = prompt('模型名称：', selectedType + '-' + new Date().toLocaleDateString());
     if (!name) return;
     const snapshot = {
       feature: curFeature,
       data: curResults.data,
       n: curResults.n,
+      unit: curResults.unit || 'ng/mL',
+      preprocess: curResults.preprocess || {},   // 问题2-H：预处理元数据（检测反解用）
       saved_at: new Date().toISOString(),
     };
     try {
@@ -292,6 +322,170 @@
     }
   }
 
+  async function savePreprocess() {
+    // 问题2-H：拟合前先把预处理设置持久化，拟合/检测共用同一套口径
+    return global.API.post('/api/modeling/preprocess', {
+      iqr: document.getElementById('md-iqr').checked,
+      log_conc: document.getElementById('md-log').checked,
+      zscore: document.getElementById('md-zscore').checked,
+    });
+  }
+
+  function renderExplore(d) {
+    // 问题2-I：SVG 散点 + 每浓度组箱线（min/q1/med/q3/max）
+    const el = document.getElementById('md-explore-plot');
+    const W = 560, H = 240, padL = 46, padR = 12, padT = 14, padB = 30;
+    const pts = d.points || [];
+    const xs = pts.map(function (p) { return p[0]; });
+    const ys = pts.map(function (p) { return p[1]; });
+    const xmin = Math.min.apply(null, xs), xmax = Math.max.apply(null, xs);
+    const ymin = Math.min.apply(null, ys), ymax = Math.max.apply(null, ys);
+    const X = function (v) { return padL + (v - xmin) / (xmax - xmin || 1) * (W - padL - padR); };
+    const Y = function (v) { return padT + (1 - (v - ymin) / (ymax - ymin || 1)) * (H - padT - padB); };
+    let svg = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">';
+    svg += '<line x1="' + padL + '" y1="' + (H - padB) + '" x2="' + (W - padR) + '" y2="' + (H - padB) + '" stroke="#cfd8df"/>';
+    svg += '<line x1="' + padL + '" y1="' + padT + '" x2="' + padL + '" y2="' + (H - padB) + '" stroke="#cfd8df"/>';
+    svg += '<text x="' + (W / 2) + '" y="' + (H - 8) + '" font-size="11" fill="#55636f" text-anchor="middle">浓度</text>';
+    svg += '<text x="14" y="' + (H / 2) + '" font-size="11" fill="#55636f" text-anchor="middle" transform="rotate(-90 14 ' + (H / 2) + ')">特征值</text>';
+    // 箱线：每组 conc → 竖线 min/max + 箱 q1..q3 + 中位横线
+    (d.box || []).forEach(function (g) {
+      const vals = g.values.slice().sort(function (a, b) { return a - b; });
+      const q = function (pct) {
+        const pos = (vals.length - 1) * pct;
+        const lo = Math.floor(pos), hi = Math.ceil(pos);
+        return vals[lo] + (vals[hi] - vals[lo]) * (pos - lo);
+      };
+      const cx = X(g.conc);
+      const vmin = vals[0], vmax = vals[vals.length - 1], q1 = q(0.25), q3 = q(0.75), med = q(0.5);
+      svg += '<line x1="' + cx + '" y1="' + Y(vmin) + '" x2="' + cx + '" y2="' + Y(vmax) + '" stroke="#94a5b4" stroke-width="1.5"/>';
+      svg += '<rect x="' + (cx - 6) + '" y="' + Y(q3) + '" width="12" height="' + (Y(q1) - Y(q3)) + '" fill="#cfe0f2" stroke="#4a7fd4"/>';
+      svg += '<line x1="' + (cx - 8) + '" y1="' + Y(med) + '" x2="' + (cx + 8) + '" y2="' + Y(med) + '" stroke="#1d6fb8" stroke-width="2"/>';
+    });
+    // 散点
+    pts.forEach(function (p) {
+      svg += '<circle cx="' + X(p[0]).toFixed(1) + '" cy="' + Y(p[1]).toFixed(1) + '" r="3.5" fill="#e05656"/>';
+    });
+    svg += '</svg>';
+    el.innerHTML = svg;
+    el.className = '';
+    document.getElementById('md-explore-info').textContent =
+      'n=' + d.n + '，Pearson r=' + d.pearson + '（特征 ' + d.feature + '）';
+  }
+
+  async function runExplore() {
+    const el = document.getElementById('md-explore-plot');
+    document.getElementById('md-explore-info').textContent = '加载中...';
+    try {
+      const res = await global.API.post('/api/modeling/explore', { feature: curFeature });
+      renderExplore(res);
+    } catch (e) {
+      el.textContent = '探索失败：' + e.message;
+    }
+  }
+
+  async function exportModelFile() {
+    // 问题2-K：下载当前选中/生效模型的 .joblib 文件
+    const el = document.getElementById('md-file-status');
+    let mid = null;
+    try {
+      const st = await global.API.get('/api/settings');
+      const active = (st.models || []).find(function (m) { return m.is_active; });
+      mid = active ? active.id : null;
+    } catch (e) { /* ignore */ }
+    if (!mid) { el.textContent = '没有生效模型可导出'; return; }
+    window.location.href = '/api/models/' + mid + '/export';
+    el.textContent = '已触发下载。';
+  }
+
+  async function importModelFile(file) {
+    const el = document.getElementById('md-file-status');
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const res = await global.API.postForm('/api/models/import_joblib', fd);
+      el.textContent = '已导入模型「' + res.name + '」（' + res.type + '）。';
+      loadSaved();
+    } catch (e) {
+      el.textContent = '导入失败：' + e.message;
+      el.className = 'status-line err';
+    }
+  }
+
+  async function predictCsv(file, download) {
+    const el = document.getElementById('md-predict-status');
+    if (!file) { el.textContent = '请先选择特征 CSV'; return; }
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      if (download) {
+        window.location.href = '#';
+        // 直接下载结果 CSV：用隐藏表单提交避免拦截
+        const form = document.createElement('form');
+        form.method = 'post'; form.action = '/api/modeling/predict_csv/export';
+        form.enctype = 'multipart/form-data';
+        const inp = document.createElement('input');
+        inp.type = 'file'; inp.name = 'file'; inp.hidden = true;
+        const dt = new DataTransfer(); dt.items.add(file); inp.files = dt.files;
+        form.appendChild(inp);
+        document.body.appendChild(form); form.submit(); form.remove();
+        el.textContent = '已触发结果 CSV 下载。';
+        return;
+      }
+      const res = await global.API.postForm('/api/modeling/predict_csv', fd);
+      const out = document.getElementById('md-predict-out');
+      let html = '<table class="md-table"><thead><tr><th>行</th><th>特征值</th><th>浓度 C</th><th>不确定度 U</th><th>判定</th></tr></thead><tbody>';
+      (res.predictions || []).forEach(function (p) {
+        html += '<tr><td>' + p.row + '</td><td>' + (p.feature_value == null ? '-' : p.feature_value) + '</td>'
+          + '<td>' + (p.conc == null ? (p.error || '-') : p.conc) + '</td>'
+          + '<td>' + (p.u == null ? '-' : p.u) + '</td>'
+          + '<td>' + (p.status || '-') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      html += '<div class="hint">模型：' + res.model + '，特征列：' + res.feature + '</div>';
+      out.innerHTML = html;
+      out.className = '';
+      el.textContent = '共 ' + res.predictions.length + ' 行。';
+    } catch (e) {
+      el.textContent = '预测失败：' + e.message;
+      el.className = 'status-line err';
+    }
+  }
+
+  async function runCv() {
+    const status = document.getElementById('md-status');
+    const box = document.getElementById('md-cv-box');
+    status.textContent = '交叉验证中...';
+    status.className = 'status-line';
+    try {
+      await savePreprocess();
+      const res = await global.API.post('/api/modeling/cv', {
+        feature: curFeature,
+        method: document.getElementById('md-cv-method').value,
+        k: 5,
+      });
+      let html = '<table class="feat-table"><thead><tr><th>模型</th><th>R²</th><th>RMSE</th><th>MAE</th><th>折数</th></tr></thead><tbody>';
+      const methodNames = { loo: '留一法', kfold: '5 折', leave_group: '留浓度组' };
+      Object.keys(res.results).forEach(function (mt) {
+        const r = res.results[mt];
+        if (r.error) {
+          html += '<tr><td><b>' + mt + '</b></td><td colspan="4">' + esc(r.error) + '</td></tr>';
+          return;
+        }
+        const s = r.summary;
+        html += '<tr><td><b>' + mt + '</b></td><td>' + s.r2 + '</td><td>' + s.rmse + '</td><td>' + s.mae + '</td><td>' + s.n_folds + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      box.innerHTML = html;
+      box.className = '';
+      status.textContent = '交叉验证完成（' + (methodNames[res.method] || res.method) + '，' + res.n + ' 个点）';
+    } catch (e) {
+      status.textContent = '交叉验证失败：' + e.message;
+      status.className = 'status-line err';
+      box.textContent = '';
+    }
+  }
+
   var initialized = false;
 
   function init() {
@@ -299,10 +493,86 @@
     initialized = true;
     document.getElementById('md-fit').addEventListener('click', runFit);
     document.getElementById('md-save').addEventListener('click', saveModel);
+    document.getElementById('md-cv').addEventListener('click', runCv);
+    document.getElementById('md-explore').addEventListener('click', runExplore);
+    document.getElementById('md-export-file').addEventListener('click', exportModelFile);
+    document.getElementById('md-import-file').addEventListener('change', function (e) {
+      importModelFile(e.target.files[0]); e.target.value = '';
+    });
+    document.getElementById('md-predict-csv').addEventListener('change', function (e) {
+      predictCsv(e.target.files[0], false); e.target.value = '';
+    });
+    document.getElementById('md-predict-csv-export').addEventListener('click', function () {
+      const inp = document.getElementById('md-predict-csv');
+      predictCsv(inp.files && inp.files[0], true);
+    });
     document.getElementById('md-feature').addEventListener('change', function () {
       curFeature = document.getElementById('md-feature').value;
       loadData();
     });
+    // 恢复预处理设置（问题2-H）
+    global.API.get('/api/modeling/preprocess').then(function (p) {
+      document.getElementById('md-iqr').checked = p.iqr !== false;
+      document.getElementById('md-log').checked = !!p.log_conc;
+      document.getElementById('md-zscore').checked = !!p.zscore;
+    }).catch(function () { /* 忽略 */ });
+
+    // 问题2-G：CSV/Excel 标定数据导入（预览列 → 选择浓度列/特征列 → 导入）
+    const impFile = document.getElementById('md-import-file');
+    const impBox = document.getElementById('md-import-box');
+    const impStatus = document.getElementById('md-imp-status');
+    document.getElementById('md-import').addEventListener('click', function () { impFile.click(); });
+    impFile.addEventListener('change', async function () {
+      if (!impFile.files.length) return;
+      const fd = new FormData();
+      fd.append('file', impFile.files[0]);
+      impStatus.textContent = '解析文件中...';
+      impStatus.className = 'status-line';
+      try {
+        const res = await global.API.postForm('/api/modeling/import_preview', fd);
+        const concSel = document.getElementById('md-imp-conc');
+        const featSel = document.getElementById('md-imp-feat');
+        concSel.innerHTML = '';
+        featSel.innerHTML = '';
+        res.columns.forEach(function (c) {
+          concSel.appendChild(new Option(c, c));
+          featSel.appendChild(new Option(c, c));
+        });
+        const guess = res.columns.find(function (c) { return /conc|浓度/i.test(c); });
+        const fguess = res.columns.find(function (c) { return /(_R$|_G$|_B$|mean|hue|T_R|Bg|ratio|od_|OD)/i.test(c); });
+        if (guess) concSel.value = guess;
+        if (fguess) featSel.value = fguess;
+        document.getElementById('md-imp-preview').textContent =
+          '列：' + res.columns.join('、') + '　共 ' + res.total_rows + ' 行，预览前 ' + Math.min(5, res.preview.length) + ' 行。';
+        impBox.style.display = 'block';
+        impStatus.textContent = '';
+      } catch (e) {
+        impStatus.textContent = '解析失败：' + e.message;
+        impStatus.className = 'status-line err';
+      }
+    });
+    document.getElementById('md-import-go').addEventListener('click', async function () {
+      if (!impFile.files.length) return;
+      const fd = new FormData();
+      fd.append('file', impFile.files[0]);
+      fd.append('conc_col', document.getElementById('md-imp-conc').value);
+      fd.append('feature_col', document.getElementById('md-imp-feat').value);
+      const impUnit = document.getElementById('md-imp-unit');
+      fd.append('unit', impUnit ? impUnit.value : 'ng/mL');
+      impStatus.textContent = '导入中...';
+      impStatus.className = 'status-line';
+      try {
+        const res = await global.API.postForm('/api/modeling/import', fd);
+        impStatus.textContent = '导入完成：' + res.imported + ' 个数据点（' + res.groups + ' 个浓度组）'
+          + (res.skipped ? '，跳过 ' + res.skipped + ' 行' : '');
+        impStatus.className = 'status-line';
+        await loadData();
+      } catch (e) {
+        impStatus.textContent = '导入失败：' + e.message;
+        impStatus.className = 'status-line err';
+      }
+    });
+
     loadData();
   }
 
@@ -319,3 +589,4 @@
     init();
   }
 })(window);
+

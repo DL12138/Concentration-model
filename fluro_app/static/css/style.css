@@ -53,7 +53,7 @@ h3 { font-size:15px; color:#1f2d3a; }
 
 /* 缩略图墙 */
 .gallery { display:flex; flex-wrap:wrap; gap:12px; }
-.gitem { width:150px; border:1px solid #dfe6ec; border-radius:9px; padding:8px; background:#fafcfd; cursor:pointer; }
+.gitem { width:150px; border:1px solid #dfe6ec; border-radius:9px; padding:8px; background:#fafcfd; cursor:pointer; position:relative; }
 .gitem:hover { border-color:#0f9d8f; }
 .gitem.selected { border-color:#0f9d8f; box-shadow:0 0 0 2px rgba(15,157,143,.25); }
 .gitem img { width:100%; border-radius:6px; display:block; }
@@ -70,6 +70,8 @@ h3 { font-size:15px; color:#1f2d3a; }
 .pb-error { background:#fbe4e2; color:#c0392b; }
 .pb-uploaded { background:#eef2f5; color:#6b7a87; }
 .gitem .gstatus { display:inline-block; font-size:10.5px; border-radius:10px; padding:1px 8px; margin-top:4px; }
+.gitem .gdel { position:absolute; top:3px; right:3px; width:22px; height:22px; line-height:18px; text-align:center; border:none; border-radius:50%; background:rgba(200,32,32,.85); color:#fff; font-size:15px; cursor:pointer; z-index:3; padding:0; }
+.gitem .gdel:hover { background:#b81f1f; }
 .st-ok { background:#e4f5f2; color:#0f7d72; }
 .st-attention { background:#fdf1dd; color:#b26a00; }
 .st-error { background:#fbe4e2; color:#c0392b; }
@@ -118,3 +120,21 @@ h3 { font-size:15px; color:#1f2d3a; }
 .feat-table th, .feat-table td { border:1px solid #dfe6ec; padding:6px 10px; text-align:center; }
 .feat-table th { background:#eef3f6; color:#3c4c5a; }
 .feat-table .dash { color:#8a97a3; }
+.bar { display:inline-block; width:64px; height:10px; background:#eef1f4; border-radius:5px; vertical-align:middle; margin-right:6px; overflow:hidden; }
+.bar-fill { height:100%; border-radius:5px; }
+.algo-list { margin:8px 0 0; padding-left:18px; font-size:13px; line-height:1.9; color:#3c4c5a; }
+.algo-list li b { color:#0f7668; }
+.det-actions { display:flex; gap:10px; margin-top:10px; }
+.feat-imgs, .result-imgs { display:flex; flex-wrap:wrap; gap:14px; margin-top:12px; }
+.feat-imgs figure, .result-imgs figure { margin:0; max-width:280px; }
+.feat-imgs img, .result-imgs img { display:block; max-width:280px; max-height:210px; border:1px solid #dfe6ec; border-radius:8px; background:#f6f8fa; }
+.feat-imgs figcaption, .result-imgs figcaption { font-size:12px; color:#8a97a3; text-align:center; margin-top:4px; }
+.ref-previews { display:flex; flex-wrap:wrap; gap:14px; margin-top:12px; }
+.ch-grid { display:flex; flex-wrap:wrap; gap:14px; margin-top:12px; }
+.ch-grid figure { margin:0; max-width:280px; }
+.ch-grid img { display:block; max-width:280px; max-height:210px; border:1px solid #dfe6ec; border-radius:8px; background:#f6f8fa; }
+.ch-grid figcaption { font-size:12px; color:#55636f; text-align:center; margin-top:4px; }
+.ref-item { margin:0; max-width:220px; }
+.ref-item img { display:block; max-width:220px; max-height:150px; border:1px solid #dfe6ec; border-radius:8px; background:#f6f8fa; }
+.ref-item figcaption { font-size:12px; color:#55636f; margin-top:4px; }
+.btn.tiny { font-size:11px; padding:1px 8px; margin-left:6px; }

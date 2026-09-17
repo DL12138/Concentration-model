@@ -96,6 +96,57 @@ MIGRATIONS = [
     (2, [
         """ALTER TABLE roi_templates ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0""",
     ]),
+    (3, [
+        """ALTER TABLE roi ADD COLUMN bg_subtract INTEGER NOT NULL DEFAULT 0""",
+    ]),
+    (4, [
+        # 单卡片槽比色检测：每张图多个命名 ROI（T 检测区、Bg 背景区等）
+        """CREATE TABLE IF NOT EXISTS rois (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            image_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'sample',   -- sample|background|color_card|blank
+            x REAL, y REAL, w REAL, h REAL,
+            source TEXT NOT NULL DEFAULT 'manual', -- auto|manual|template
+            bg_subtract INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            UNIQUE(image_id, name)
+        )""",
+        # 模板扩展：支持多 ROI 集合（JSON：{"T": {...}, "Bg": {...}}）
+        """ALTER TABLE roi_templates ADD COLUMN template_json TEXT""",
+    ]),
+    (5, [
+        # 每 ROI 扩展特征（问题2-B）：RGB 均值/中位数/SD、HSV、Lab、灰度、OD、通道比
+        """CREATE TABLE IF NOT EXISTS roi_features (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            image_id INTEGER NOT NULL,
+            roi_name TEXT NOT NULL,
+            features_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            UNIQUE(image_id, roi_name)
+        )""",
+    ]),
+    (6, [
+        # 显示/导出用：保留上传时的原始文件名（问题2-D）
+        """ALTER TABLE images ADD COLUMN filename TEXT""",
+    ]),
+    (7, [
+        # 问题2-E：结果表可编辑（备注、重复编号）与导出列
+        """ALTER TABLE images ADD COLUMN note TEXT""",
+        """ALTER TABLE images ADD COLUMN replicate INTEGER NOT NULL DEFAULT 1""",
+    ]),
+    (8, [
+        # 问题2-G：界面2 支持 CSV/Excel 导入标定数据（外部数据点）
+        """ALTER TABLE calibration_points ADD COLUMN feature_value REAL""",
+        """ALTER TABLE calibration_points ADD COLUMN feature_name TEXT""",
+        """ALTER TABLE calibration_points ADD COLUMN source TEXT NOT NULL DEFAULT 'app'""",
+    ]),
+    (9, [
+        # 第四批问题2：浓度单位选项（上传标定浓度时可选 μmol/L 等）
+        """ALTER TABLE images ADD COLUMN conc_unit TEXT NOT NULL DEFAULT 'ng/mL'""",
+        """ALTER TABLE calibration_groups ADD COLUMN unit TEXT NOT NULL DEFAULT 'ng/mL'""",
+        """ALTER TABLE detections ADD COLUMN unit TEXT NOT NULL DEFAULT 'ng/mL'""",
+    ]),
 ]
 
 

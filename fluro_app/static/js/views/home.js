@@ -21,7 +21,7 @@
     }
     const jm = judgeMap[d.status] || [d.status, 'st-uploaded'];
     el.innerHTML =
-      '<div class="det-conc" style="font-size:26px;">' + Number(d.conc).toFixed(2) + ' <span class="det-unit">ng/mL</span></div>'
+      '<div class="det-conc" style="font-size:26px;">' + Number(d.conc).toFixed(2) + ' <span class="det-unit">' + esc(d.unit || 'ng/mL') + '</span></div>'
       + '<div class="det-u">U(95%) = ±' + Number(d.u).toFixed(2)
       + '　区间 [' + (d.conc - d.u).toFixed(2) + ', ' + (d.conc + d.u).toFixed(2) + ']</div>'
       + '<div class="det-judge" style="margin-top:6px;"><span class="gstatus ' + jm[1] + '">' + jm[0] + '</span></div>'
@@ -62,13 +62,65 @@
       + '<div class="det-meta" style="margin-top:8px;">当前批次：' + esc(s.current_batch || '-') + '</div>';
   }
 
+  function renderWf(s) {
+    const el = document.getElementById('home-wf');
+    const meta = document.getElementById('home-wf-meta');
+    const wf = s.workflow_steps;
+    if (!wf) {
+      el.innerHTML = '<div class="empty">暂无检测记录。完成一次检测后，这里会展示该图在「上传→预处理→通道分离→ROI」各步的处理图像。</div>';
+      meta.textContent = '';
+      return;
+    }
+    meta.textContent = '图片 #' + wf.image_id + '　点击任一步图像可跳转到「检测工作流」对应步骤';
+    let html = '<div style="display:flex;gap:10px;flex-wrap:wrap;">';
+    const items = [
+      { label: '① 上传原图', url: wf.upload, step: 1 },
+    ];
+    if (wf.preprocess) items.push({ label: '② 预处理后', url: wf.preprocess, step: 2 });
+    if (wf.channels) {
+      (['r', 'g', 'b']).forEach(function (ch) {
+        if (wf.channels[ch]) items.push({ label: '③ 通道 ' + ch.toUpperCase(), url: wf.channels[ch], step: 3 });
+      });
+    }
+    if (wf.roi) items.push({ label: '④ ROI 叠加', url: wf.roi, step: 4 });
+    items.forEach(function (it) {
+      html += '<div style="text-align:center;max-width:150px;">'
+        + '<button type="button" data-step="' + it.step + '" data-image="' + wf.image_id + '"'
+        + ' title="点击跳转到检测工作流步骤 ' + it.step + '"'
+        + ' style="padding:0;border:1px solid #d9e2ea;border-radius:6px;background:none;cursor:pointer;display:block;">'
+        + '<img src="' + it.url + '?t=' + Date.now() + '" alt="' + esc(it.label) + '"'
+        + ' style="width:150px;height:110px;object-fit:cover;border-radius:6px;display:block;"></button>'
+        + '<div style="font-size:12px;color:#55636f;margin-top:4px;">' + esc(it.label) + '</div>'
+        + '</div>';
+    });
+    html += '</div>';
+    el.innerHTML = html;
+    // 点击任一步图像 → 跳转检测工作流对应步骤并选中该图（实时联动）
+    el.querySelectorAll('button[data-step]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const step = parseInt(b.dataset.step, 10);
+        const imageId = parseInt(b.dataset.image, 10);
+        if (global.FluroApp && global.FluroApp.switchView) global.FluroApp.switchView('workflow');
+        if (global.FluroWorkflow && typeof global.FluroWorkflow.openStep === 'function') {
+          global.FluroWorkflow.openStep(imageId, step);
+        }
+      });
+    });
+  }
+
+  var pollTimer = null;
+
   async function refresh() {
+    // 仅当首页视图可见时刷新（实时显示最新每步图像）
+    const homeView = document.getElementById('view-home');
+    if (homeView && !homeView.classList.contains('active')) return;
     try {
       const s = await global.API.get('/api/home/summary');
       renderLast(s.last_detection);
       renderCalib(s);
       renderModel(s);
       renderToday(s);
+      renderWf(s);
     } catch (e) {
       document.getElementById('home-last').innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>';
     }
@@ -76,6 +128,9 @@
 
   function init() {
     refresh();
+    if (pollTimer) clearInterval(pollTimer);
+    // 工作流任何一步处理更新后，首页每步图像实时同步
+    pollTimer = setInterval(refresh, 5000);
   }
 
   function onView() { refresh(); }

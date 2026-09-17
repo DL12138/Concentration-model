@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT))
 
 import pytest  # noqa: E402
 import cv2  # noqa: E402
+import numpy as np  # noqa: E402
 
 from app import create_app  # noqa: E402
 from app import database as db  # noqa: E402
@@ -34,20 +35,33 @@ def _upload(client, img=None, kind='detection', conc=None):
     return resp.get_json()['images'][0]['id']
 
 
-def test_pipeline_without_template_marks_attention(client):
+def test_pipeline_without_template_auto_detects_roi(client):
+    """无模板时流水线自动识别 ROI（不强制人工框选）；无生效模型时结果仍为 attention。"""
     iid = _upload(client)
     resp = client.post(f'/api/pipeline/{iid}/run', json={})
     assert resp.status_code == 200
     r = resp.get_json()['result']
     assert r['steps']['preprocess'] == 'ok'
-    assert r['steps']['roi'] == 'attention'      # 无模板
-    assert r['steps']['feature'] == 'attention'
+    assert r['steps']['roi'] == 'ok'             # 无模板：自动识别
+    assert r['steps']['feature'] == 'ok'
     assert r['steps']['result'] == 'attention'   # 无生效模型
     assert r['status'] == 'attention'
     # images.status 更新
     row = db.query_one(Path(client.application.config['DATA_DIR']) / 'fluro.db',
                        'SELECT status FROM images WHERE id=?', (iid,))
     assert row['status'] == 'attention'
+
+
+def test_pipeline_no_region_marks_attention(client):
+    """无检测区（纯灰图）时 ROI 自动识别失败，整条流水线标记 attention 待人工。"""
+    img = np.full((300, 400, 3), 90, dtype=np.uint8)
+    ok, buf = cv2.imencode('.png', img[:, :, ::-1])
+    data = {'files': [(io.BytesIO(buf.tobytes()), 't.png')], 'kind': 'detection'}
+    iid = client.post('/api/images/upload', data=data, content_type='multipart/form-data').get_json()['images'][0]['id']
+    resp = client.post(f'/api/pipeline/{iid}/run', json={})
+    r = resp.get_json()['result']
+    assert r['steps']['roi'] == 'attention'
+    assert r['steps']['feature'] == 'attention'
 
 
 def test_pipeline_with_template_full_ok(client):
